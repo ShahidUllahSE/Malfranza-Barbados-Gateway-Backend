@@ -1,0 +1,269 @@
+MALFRANZA BACKEND API ENDPOINTS
+Base URL: http://localhost:5000/api/v1
+
+============================================================
+GENERAL
+============================================================
+
+GET /health
+Checks whether the backend server is running and returns the current server timestamp.
+
+============================================================
+ADMIN AUTHENTICATION
+============================================================
+
+POST /auth/bootstrap
+Creates the first admin account. This endpoint requires the ADMIN_BOOTSTRAP_KEY and stops working after the first admin has been created.
+
+Request body:
+{
+  "email": "admin@example.com",
+  "password": "minimum-8-characters",
+  "bootstrapKey": "value-from-backend-env"
+}
+
+POST /auth/login
+Logs an admin or staff member in and returns a JWT access token for protected admin endpoints.
+
+Request body:
+{
+  "email": "admin@example.com",
+  "password": "your-password"
+}
+
+GET /auth/me
+Returns the currently authenticated admin or staff member so the admin panel can validate the active session.
+
+Required header:
+Authorization: Bearer <access-token>
+
+============================================================
+PUBLIC APARTMENT ENDPOINTS
+============================================================
+
+GET /apartments
+Returns all active apartments. Results can be filtered by apartment type and guest capacity, then sorted by price or newest.
+
+Query example:
+/apartments?type=one-bedroom&guests=2&sort=price-asc
+
+GET /apartments/:slug
+Returns one active apartment using its readable slug, such as garden-view or family-stay.
+
+============================================================
+PROTECTED ADMIN APARTMENT ENDPOINTS
+All endpoints below require:
+Authorization: Bearer <access-token>
+============================================================
+
+GET /admin/apartments
+Returns active and inactive apartments for the admin panel with pagination and optional text/status filters.
+
+GET /admin/apartments/:id
+Returns the complete details of one apartment using its MongoDB ID.
+
+POST /admin/apartments
+Creates a new apartment with its pricing, capacity, amenities and photo URLs.
+
+Required role: admin
+
+PATCH /admin/apartments/:id
+Updates one or more apartment fields, including price, description, capacity, amenities, photos and active status.
+
+DELETE /admin/apartments/:id
+Safely deactivates an apartment so it is hidden publicly without deleting its historical booking relationships.
+
+Required role: admin
+
+============================================================
+PUBLIC BOOKING ENDPOINTS
+============================================================
+
+GET /bookings/availability
+Checks whether an apartment is free between the selected check-in and check-out dates.
+
+Query example:
+/bookings/availability?apartmentId=<mongodb-id>&checkIn=2026-07-20&checkOut=2026-07-25
+
+POST /bookings
+Creates a new apartment booking, prevents overlapping reservations and returns a unique booking reference.
+
+Request body:
+{
+  "apartmentId": "<mongodb-apartment-id>",
+  "guestName": "Guest Name",
+  "guestEmail": "guest@example.com",
+  "guestPhone": "+1 246 000 0000",
+  "checkIn": "2026-07-20",
+  "checkOut": "2026-07-25",
+  "guests": 2,
+  "specialRequests": "Optional request"
+}
+
+The backend calculates the number of nights, nightly rate, stay subtotal and total from the apartment stored in MongoDB.
+
+GET /bookings/:reference?email=<guest-email>
+Lets a guest retrieve their booking using both the booking reference and matching email address.
+
+Example:
+/bookings/MFZ-2026-ABC12345?email=guest@example.com
+
+============================================================
+PROTECTED ADMIN BOOKING ENDPOINTS
+All endpoints below require:
+Authorization: Bearer <access-token>
+============================================================
+
+GET /admin/bookings
+Returns a paginated booking list for the admin panel with optional status, payment, date and text-search filters.
+
+Query example:
+/admin/bookings?page=1&limit=20&status=pending&paymentStatus=unpaid&search=guest
+
+GET /admin/bookings/:id
+Returns the complete details of one booking using its MongoDB booking ID.
+
+PATCH /admin/bookings/:id/status
+Changes a booking through its allowed lifecycle: pending to confirmed, confirmed to checked-in, checked-in to checked-out, or pending/confirmed to cancelled.
+
+Request body:
+{
+  "status": "confirmed"
+}
+
+PATCH /admin/bookings/:id/payment
+Allows an admin to mark a booking payment as paid or refunded. Marking it paid requires a payment reference.
+
+Required role: admin
+
+Request body:
+{
+  "paymentStatus": "paid",
+  "paymentReference": "PAYPAL-TRANSACTION-ID"
+}
+
+DELETE /admin/bookings/:id
+Safely cancels a booking instead of permanently deleting its record, preserving booking and payment history.
+
+Required role: admin
+
+============================================================
+PUBLIC TAXI ENDPOINTS
+============================================================
+
+POST /taxi/fare-estimate
+Uses Google Routes to calculate driving distance, duration and the estimated fare in USD.
+
+Request body:
+{
+  "pickupLocation": "Grantley Adams International Airport",
+  "dropoffLocation": "Oistins",
+  "passengers": 2
+}
+
+POST /taxi/bookings
+Recalculates the route and fare on the server, then creates a taxi booking with a unique reference.
+
+Request body:
+{
+  "serviceType": "Airport Pickup",
+  "pickupLocation": "Grantley Adams International Airport",
+  "dropoffLocation": "Oistins",
+  "pickupDate": "2026-07-25",
+  "pickupTime": "14:30",
+  "passengers": 2,
+  "customerName": "Guest Name",
+  "customerEmail": "guest@example.com",
+  "customerPhone": "+1 246 000 0000",
+  "notes": "Optional notes"
+}
+
+GET /taxi/bookings/:reference?email=<customer-email>
+Lets a customer retrieve their taxi booking using its reference and matching email address.
+
+============================================================
+PROTECTED ADMIN TAXI ENDPOINTS
+All endpoints below require:
+Authorization: Bearer <access-token>
+============================================================
+
+GET /admin/taxi
+Returns paginated taxi bookings with optional status, date and text-search filters.
+
+GET /admin/taxi/:id
+Returns the complete details of one taxi booking.
+
+PATCH /admin/taxi/:id/status
+Moves a taxi booking through pending, confirmed, completed or cancelled status.
+
+DELETE /admin/taxi/:id
+Safely cancels a taxi booking rather than permanently deleting its history.
+
+Required role: admin
+
+============================================================
+PUBLIC ENQUIRY ENDPOINT
+============================================================
+
+POST /enquiries
+Accepts the website contact form, stores the enquiry and returns a unique reference.
+
+Request body:
+{
+  "name": "Guest Name",
+  "email": "guest@example.com",
+  "phone": "+1 246 000 0000",
+  "interestedIn": "Apartment Stay",
+  "preferredDate": "2026-07-25",
+  "message": "I would like more information."
+}
+
+============================================================
+PROTECTED ADMIN ENQUIRY ENDPOINTS
+All endpoints below require:
+Authorization: Bearer <access-token>
+============================================================
+
+GET /admin/enquiries
+Returns paginated enquiries with optional status, interest, date and text-search filters.
+
+GET /admin/enquiries/:id
+Returns the full details and admin notes for one enquiry.
+
+PATCH /admin/enquiries/:id
+Updates an enquiry status and/or private admin notes.
+
+Request body:
+{
+  "status": "responded",
+  "adminNotes": "Replied to the customer by phone."
+}
+
+DELETE /admin/enquiries/:id
+Safely closes an enquiry rather than permanently deleting it.
+
+Required role: admin
+
+============================================================
+PROTECTED CLOUDINARY MEDIA ENDPOINTS
+All endpoints below require:
+Authorization: Bearer <access-token>
+============================================================
+
+POST /admin/media/images
+Uploads one apartment image to Cloudinary and returns its optimized secure URL and public ID.
+
+Content-Type: multipart/form-data
+Form field: image
+Allowed formats: JPEG, PNG, WebP and AVIF
+Maximum size: 8 MB
+
+DELETE /admin/media/images
+Deletes an uploaded Cloudinary image using its public ID.
+
+Required role: admin
+
+Request body:
+{
+  "publicId": "malfranza/apartments/example"
+}
