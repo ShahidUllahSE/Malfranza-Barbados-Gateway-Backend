@@ -33,6 +33,7 @@ async function findConflict(
   apartmentId: Types.ObjectId,
   checkIn: Date,
   checkOut: Date,
+  unitIds?: Types.ObjectId[],
   session?: ClientSession,
 ): Promise<boolean> {
   const filter: QueryFilter<BookingRecord> = {
@@ -41,10 +42,35 @@ async function findConflict(
     checkIn: { $lt: checkOut },
     checkOut: { $gt: checkIn },
   };
+  if (unitIds && unitIds.length > 0) {
+    filter.$or = [
+      { unitId: { $in: unitIds } },
+      { unitIds: { $in: unitIds } },
+      // A whole-apartment booking (no unit info at all) blocks every unit.
+      {
+        $and: [
+          { $or: [{ unitId: { $exists: false } }, { unitId: null }] },
+          { $or: [{ unitIds: { $exists: false } }, { unitIds: { $size: 0 } }] },
+        ],
+      },
+    ];
+  }
   const query = Booking.exists(filter);
 
   if (session) query.session(session);
   return (await query) !== null;
+}
+
+/** True when the booking blocks the given unit (covers legacy shapes). */
+function bookingBlocksUnit(
+  booking: { unitId?: unknown; unitIds?: unknown[] | null },
+  unitId: string,
+): boolean {
+  const ids = Array.isArray(booking.unitIds) ? booking.unitIds.map(String) : [];
+  if (booking.unitId) ids.push(String(booking.unitId));
+  // No unit info at all means the whole apartment is booked.
+  if (ids.length === 0) return true;
+  return ids.includes(unitId);
 }
 
 async function ensureBookingLock(apartmentId: Types.ObjectId): Promise<void> {
@@ -62,9 +88,26 @@ async function ensureBookingLock(apartmentId: Types.ObjectId): Promise<void> {
 
 export async function checkAvailability(input: AvailabilityQuery): Promise<boolean> {
   const apartmentId = new Types.ObjectId(input.apartmentId);
-  const apartmentExists = await Apartment.exists({ _id: apartmentId, isActive: true });
-  if (!apartmentExists) throw new AppError(404, "Apartment not found");
-  return !(await findConflict(apartmentId, toUtcDate(input.checkIn), toUtcDate(input.checkOut)));
+  const apartment = await Apartment.findOne({ _id: apartmentId, isActive: true });
+  if (!apartment) throw new AppError(404, "Apartment not found");
+
+  let selectedUnitIds: Types.ObjectId[] | undefined;
+  if (apartment.units.length > 0) {
+    const requested = input.unitIds ?? (input.unitId ? [input.unitId] : []);
+    if (requested.length === 0) throw new AppError(400, "Select a unit for this apartment");
+    selectedUnitIds = requested.map((id) => {
+      const unit = apartment.units.id(id);
+      if (!unit || !unit.isActive) throw new AppError(404, "Apartment unit not found");
+      return new Types.ObjectId(id);
+    });
+  }
+
+  return !(await findConflict(
+    apartmentId,
+    toUtcDate(input.checkIn),
+    toUtcDate(input.checkOut),
+    selectedUnitIds,
+  ));
 }
 
 export async function listApartmentOccupancy(input: {
@@ -72,7 +115,7 @@ export async function listApartmentOccupancy(input: {
   checkOut?: string;
 }) {
   const apartments = await Apartment.find({ isActive: true })
-    .select("_id slug name subtitle")
+    .select("_id slug name subtitle units")
     .lean();
 
   const today = toUtcDate(new Date().toISOString().slice(0, 10));
@@ -90,7 +133,7 @@ export async function listApartmentOccupancy(input: {
     checkOut: { $gt: today },
     checkIn: { $lt: displayEnd },
   })
-    .select("apartmentId checkIn checkOut status")
+    .select("apartmentId unitId unitIds unitName checkIn checkOut status")
     .sort({ checkIn: 1 })
     .lean();
 
@@ -121,7 +164,14 @@ export async function listApartmentOccupancy(input: {
       slug: apartment.slug,
       name: apartment.name,
       subtitle: apartment.subtitle ?? null,
-      available: availableForRequest,
+      available: apartment.units.length > 0
+        ? apartment.units.some((unit) => {
+            if (!unit.isActive) return false;
+            return !conflictsSearch.some(
+              (booking) => bookingBlocksUnit(booking, String(unit._id)),
+            );
+          })
+        : availableForRequest,
       occupiedNow: !!current,
       currentBooking: current
         ? {
@@ -141,7 +191,36 @@ export async function listApartmentOccupancy(input: {
         checkIn: booking.checkIn.toISOString().slice(0, 10),
         checkOut: booking.checkOut.toISOString().slice(0, 10),
         status: booking.status,
+        unitId: booking.unitId ? String(booking.unitId) : null,
+        unitName: booking.unitName ?? null,
       })),
+      units: apartment.units.map((unit) => {
+        const unitRanges = ranges.filter(
+          (booking) => bookingBlocksUnit(booking, String(unit._id)),
+        );
+        const unitCurrent = unitRanges.find(
+          (booking) => booking.checkIn <= today && booking.checkOut > today,
+        );
+        const unitConflicts = unitRanges.some(
+          (booking) => booking.checkIn < searchEnd && booking.checkOut > searchStart,
+        );
+        return {
+          id: String(unit._id),
+          name: unit.name,
+          bedrooms: unit.bedrooms,
+          bathrooms: unit.bathrooms,
+          maxGuests: unit.maxGuests,
+          pricePerNight: unit.pricePerNight,
+          isActive: unit.isActive,
+          available: unit.isActive && (hasSearchDates ? !unitConflicts : !unitCurrent),
+          occupiedNow: !!unitCurrent,
+          blockedRanges: unitRanges.map((booking) => ({
+            checkIn: booking.checkIn.toISOString().slice(0, 10),
+            checkOut: booking.checkOut.toISOString().slice(0, 10),
+            status: booking.status,
+          })),
+        };
+      }),
     };
   });
 }
@@ -168,11 +247,58 @@ export async function createBooking(input: CreateBookingInput, userId?: string) 
         throw new AppError(400, `This apartment allows a maximum of ${apartment.maxGuests} guests`);
       }
 
-      if (await findConflict(apartmentId, checkIn, checkOut, session)) {
-        throw new AppError(409, "The apartment is unavailable for the selected dates");
+      type SelectedUnit = {
+        _id: Types.ObjectId;
+        name: string;
+        maxGuests: number;
+        pricePerNight: number;
+        isActive: boolean;
+      };
+      let selectedUnits: SelectedUnit[] = [];
+      if (apartment.units.length > 0) {
+        const requestedIds = [...new Set(input.unitIds ?? (input.unitId ? [input.unitId] : []))];
+        if (requestedIds.length === 0) {
+          throw new AppError(400, "Select at least one unit for this apartment");
+        }
+        selectedUnits = requestedIds.map((id) => {
+          const unit = apartment.units.id(id);
+          if (!unit || !unit.isActive) throw new AppError(404, "Apartment unit not found");
+          return unit;
+        });
+        const combinedMaxGuests = selectedUnits.reduce((sum, unit) => sum + unit.maxGuests, 0);
+        if (input.guests > combinedMaxGuests) {
+          const label = selectedUnits.length === 1
+            ? selectedUnits[0]!.name
+            : "The selected units";
+          throw new AppError(400, `${label} allow${selectedUnits.length === 1 ? "s" : ""} a maximum of ${combinedMaxGuests} guests`);
+        }
       }
 
-      const staySubtotal = money(apartment.pricePerNight * nights);
+      const selectedUnitIds = selectedUnits.map(
+        (unit) => new Types.ObjectId(String(unit._id)),
+      );
+      if (await findConflict(
+        apartmentId,
+        checkIn,
+        checkOut,
+        selectedUnitIds.length > 0 ? selectedUnitIds : undefined,
+        session,
+      )) {
+        throw new AppError(
+          409,
+          selectedUnits.length === 1
+            ? `${selectedUnits[0]!.name} is unavailable for the selected dates`
+            : selectedUnits.length > 1
+              ? "One or more of the selected units are unavailable for the selected dates"
+              : "The apartment is unavailable for the selected dates",
+        );
+      }
+
+      // Combined nightly rate: sum of all selected unit rates (or apartment rate).
+      const nightlyRate = selectedUnits.length > 0
+        ? money(selectedUnits.reduce((sum, unit) => sum + unit.pricePerNight, 0))
+        : apartment.pricePerNight;
+      const staySubtotal = money(nightlyRate * nights);
       const serviceFee = 0;
       const totalAmount = money(staySubtotal + serviceFee + (input.taxi?.fare ?? 0));
 
@@ -180,10 +306,15 @@ export async function createBooking(input: CreateBookingInput, userId?: string) 
         ...input,
         userId: userId ? new Types.ObjectId(userId) : undefined,
         apartmentId,
+        unitId: selectedUnitIds.length === 1 ? selectedUnitIds[0] : undefined,
+        unitIds: selectedUnitIds.length > 0 ? selectedUnitIds : undefined,
+        unitName: selectedUnits.length > 0
+          ? selectedUnits.map((unit) => unit.name).join(" + ")
+          : undefined,
         apartmentName: apartment.subtitle
           ? `${apartment.name} — ${apartment.subtitle}`
           : apartment.name,
-        nightlyRate: apartment.pricePerNight,
+        nightlyRate,
         checkIn,
         checkOut,
         nights,

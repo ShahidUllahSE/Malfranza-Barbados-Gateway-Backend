@@ -28,6 +28,17 @@ const bookingSchema = new Schema(
       required: true,
       index: true,
     },
+    unitId: {
+      type: Schema.Types.ObjectId,
+      index: true,
+    },
+    // All units covered by this booking (supports booking several units at once).
+    unitIds: {
+      type: [Schema.Types.ObjectId],
+      default: undefined,
+      index: true,
+    },
+    unitName: { type: String, trim: true, maxlength: 500 },
     apartmentName: { type: String, required: true, trim: true, maxlength: 160 },
     nightlyRate: { type: Number, required: true, min: 0 },
     guestName: { type: String, required: true, trim: true, maxlength: 120 },
@@ -70,6 +81,7 @@ const bookingSchema = new Schema(
 );
 
 bookingSchema.index({ apartmentId: 1, checkIn: 1, checkOut: 1 });
+bookingSchema.index({ apartmentId: 1, unitId: 1, checkIn: 1, checkOut: 1 });
 
 export type BookingRecord = InferSchemaType<typeof bookingSchema>;
 export const Booking = model<BookingRecord>("Booking", bookingSchema);

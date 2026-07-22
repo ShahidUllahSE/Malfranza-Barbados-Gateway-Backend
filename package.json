@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "seed:apartments": "tsx src/scripts/seed-apartments.ts",
+    "seed:multi-unit": "tsx src/scripts/seed-multi-unit-apartment.ts",
     "seed:apartment-media": "tsx src/scripts/seed-apartment-media.ts",
     "seed:user": "tsx src/scripts/seed-user.ts",
     "seed:driver": "tsx src/scripts/seed-driver.ts",

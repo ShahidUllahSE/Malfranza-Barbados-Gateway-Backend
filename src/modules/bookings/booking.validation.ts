@@ -10,17 +10,30 @@ const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD forma
 );
 
 const apartmentId = z.string().refine(Types.ObjectId.isValid, "Invalid apartment ID");
+const unitId = z.string().refine(Types.ObjectId.isValid, "Invalid unit ID");
+const unitIds = z.array(unitId).min(1).max(20);
 
 const dateRange = {
   apartmentId,
+  unitId: unitId.optional(),
   checkIn: dateString,
   checkOut: dateString,
 };
 
-export const availabilityQuerySchema = z.object(dateRange).refine(
-  (input) => input.checkOut > input.checkIn,
-  { message: "Check-out must be after check-in", path: ["checkOut"] },
-);
+export const availabilityQuerySchema = z
+  .object({
+    ...dateRange,
+    // Comma-separated list of unit IDs (query string friendly).
+    unitIds: z
+      .string()
+      .transform((value) => value.split(",").map((part) => part.trim()).filter(Boolean))
+      .pipe(unitIds)
+      .optional(),
+  })
+  .refine(
+    (input) => input.checkOut > input.checkIn,
+    { message: "Check-out must be after check-in", path: ["checkOut"] },
+  );
 
 export const occupancyQuerySchema = z
   .object({
@@ -35,6 +48,7 @@ export const occupancyQuerySchema = z
 export const createBookingSchema = z
   .object({
     ...dateRange,
+    unitIds: unitIds.optional(),
     guestName: z.string().trim().min(2).max(120),
     guestEmail: z.email().max(254),
     guestPhone: z.string().trim().min(6).max(40),

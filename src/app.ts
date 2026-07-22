@@ -10,7 +10,7 @@ export const app = express();
 const allowedOrigins = new Set([
   env.FRONTEND_URL,
   ...(env.NODE_ENV === "development"
-    ? ["http://localhost:8080", "http://localhost:8081"]
+    ? ["http://localhost:8080", "http://localhost:8081", "http://localhost:8082"]
     : []),
 ]);
 
