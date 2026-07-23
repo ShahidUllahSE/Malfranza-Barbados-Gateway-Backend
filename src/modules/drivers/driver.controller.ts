@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 import {
   createDriver,
+  deleteDriver,
   getAdminDriverDetail,
   listAvailableDrivers,
   listDrivers,
@@ -54,6 +55,16 @@ export const patchAdminDriver: RequestHandler = async (request, response) => {
   const input = updateDriverSchema.parse(request.body);
   const driver = await updateDriver(id, input);
   response.status(200).json({ success: true, data: driver });
+};
+
+export const deleteAdminDriver: RequestHandler = async (request, response) => {
+  const { id } = driverIdParamSchema.parse(request.params);
+  const result = await deleteDriver(id);
+  response.status(200).json({
+    success: true,
+    message: "Driver deleted",
+    data: result,
+  });
 };
 
 export const postDriverLogin: RequestHandler = async (request, response) => {

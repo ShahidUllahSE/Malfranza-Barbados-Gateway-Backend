@@ -98,3 +98,24 @@ export async function deactivateApartment(id: string) {
   if (!apartment) throw new AppError(404, "Apartment not found");
   return apartment;
 }
+
+export async function deleteApartment(id: string) {
+  const apartment = await Apartment.findById(id);
+  if (!apartment) throw new AppError(404, "Apartment not found");
+
+  // Import Booking lazily to avoid circular imports at module load.
+  const { Booking } = await import("../bookings/booking.model.js");
+  const activeBooking = await Booking.exists({
+    apartmentId: apartment._id,
+    status: { $in: ["pending", "confirmed", "checked_in"] },
+  });
+  if (activeBooking) {
+    throw new AppError(
+      409,
+      "Cannot delete an apartment with active bookings. Deactivate it instead, or cancel those bookings first.",
+    );
+  }
+
+  await Apartment.findByIdAndDelete(id);
+  return apartment;
+}

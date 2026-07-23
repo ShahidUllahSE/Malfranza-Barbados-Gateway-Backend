@@ -162,6 +162,25 @@ export async function updateDriver(id: string, input: UpdateDriverInput) {
   });
 }
 
+export async function deleteDriver(id: string) {
+  const driver = await Driver.findById(id);
+  if (!driver) throw new AppError(404, "Driver not found");
+
+  const activeTrip = await TaxiBooking.exists({
+    driverId: driver._id,
+    status: { $in: ["assigned", "en_route"] },
+  });
+  if (activeTrip) {
+    throw new AppError(
+      409,
+      "Cannot delete a driver with active trips. Reassign or complete those trips first, or deactivate the driver instead.",
+    );
+  }
+
+  await Driver.findByIdAndDelete(id);
+  return { id: driver.id };
+}
+
 export async function loginDriver(input: DriverLoginInput) {
   const driver = await Driver.findOne({ email: input.email }).select("+passwordHash");
   const passwordHash = driver?.passwordHash ?? (await dummyHashPromise);

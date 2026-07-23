@@ -1,7 +1,7 @@
 import type { RequestHandler } from "express";
 import {
   createApartment,
-  deactivateApartment,
+  deleteApartment as removeApartment,
   getAdminApartment,
   listAdminApartments,
   updateApartment,
@@ -40,10 +40,10 @@ export const patchApartment: RequestHandler = async (request, response) => {
 
 export const deleteApartment: RequestHandler = async (request, response) => {
   const { id } = apartmentIdParamSchema.parse(request.params);
-  const apartment = await deactivateApartment(id);
+  const apartment = await removeApartment(id);
   response.status(200).json({
     success: true,
-    message: "Apartment deactivated",
-    data: apartment,
+    message: "Apartment deleted",
+    data: { id: apartment._id },
   });
 };
