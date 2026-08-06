@@ -5,14 +5,34 @@ import {
   listUserBookings,
   listUserTaxiBookings,
   loginUser,
-  registerUser,
+  resendSignupOtp,
+  startSignupWithOtp,
+  verifySignupOtp,
 } from "./user.service.js";
-import { loginUserSchema, registerUserSchema } from "./user.validation.js";
+import {
+  loginUserSchema,
+  registerUserSchema,
+  resendSignupOtpSchema,
+  verifySignupOtpSchema,
+} from "./user.validation.js";
 
+/** Start signup — send email OTP (account not created yet). */
 export const postRegister: RequestHandler = async (request, response) => {
   const input = registerUserSchema.parse(request.body);
-  const result = await registerUser(input);
+  const result = await startSignupWithOtp(input);
+  response.status(200).json({ success: true, data: result });
+};
+
+export const postVerifySignupOtp: RequestHandler = async (request, response) => {
+  const input = verifySignupOtpSchema.parse(request.body);
+  const result = await verifySignupOtp(input);
   response.status(201).json({ success: true, data: result });
+};
+
+export const postResendSignupOtp: RequestHandler = async (request, response) => {
+  const input = resendSignupOtpSchema.parse(request.body);
+  const result = await resendSignupOtp(input);
+  response.status(200).json({ success: true, data: result });
 };
 
 export const postLogin: RequestHandler = async (request, response) => {

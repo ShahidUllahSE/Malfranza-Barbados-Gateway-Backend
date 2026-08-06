@@ -44,6 +44,46 @@ async function sendMail(options: {
   return { sent: true as const };
 }
 
+export async function sendSignupOtpEmail(input: {
+  to: string;
+  name: string;
+  code: string;
+  expiresMinutes: number;
+}) {
+  const greeting = input.name.trim() || "there";
+  const subject = "Your Malfranza verification code";
+
+  const text = [
+    `Hi ${greeting},`,
+    "",
+    "Use this code to complete your Malfranza account signup:",
+    "",
+    input.code,
+    "",
+    `This code expires in ${input.expiresMinutes} minutes.`,
+    "If you did not request this, you can ignore this email.",
+    "",
+    "— Malfranza Apartments & Taxi",
+  ].join("\n");
+
+  const html = `
+    <div style="font-family: system-ui, sans-serif; line-height: 1.5; color: #1F2A2A;">
+      <p>Hi ${escapeHtml(greeting)},</p>
+      <p>Use this code to complete your Malfranza account signup:</p>
+      <p style="font-size:28px;letter-spacing:0.2em;font-weight:700;margin:20px 0;">
+        ${escapeHtml(input.code)}
+      </p>
+      <p style="color:#4a5a5a;font-size:14px;">
+        This code expires in ${input.expiresMinutes} minutes.
+        If you did not request this, you can ignore this email.
+      </p>
+      <p>— Malfranza Apartments &amp; Taxi</p>
+    </div>
+  `;
+
+  return sendMail({ to: input.to, subject, text, html });
+}
+
 export async function sendGuestCredentialsEmail(input: {
   to: string;
   name: string;

@@ -16,5 +16,19 @@ export const registerUserSchema = z.object({
 
 export const loginUserSchema = z.object(credentials);
 
+export const verifySignupOtpSchema = z.object({
+  email: z.email().max(254).transform((value) => value.toLowerCase()),
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Enter the 6-digit code from your email"),
+});
+
+export const resendSignupOtpSchema = z.object({
+  email: z.email().max(254).transform((value) => value.toLowerCase()),
+});
+
 export type RegisterUserInput = z.infer<typeof registerUserSchema>;
 export type LoginUserInput = z.infer<typeof loginUserSchema>;
+export type VerifySignupOtpInput = z.infer<typeof verifySignupOtpSchema>;
+export type ResendSignupOtpInput = z.infer<typeof resendSignupOtpSchema>;

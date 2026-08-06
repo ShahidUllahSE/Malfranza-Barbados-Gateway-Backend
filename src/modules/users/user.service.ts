@@ -1,15 +1,37 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { jwtVerify, SignJWT } from "jose";
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { Booking } from "../bookings/booking.model.js";
+import { sendSignupOtpEmail } from "../notifications/email.service.js";
 import { TaxiBooking } from "../taxi/taxi.model.js";
+import { SignupOtp } from "./signup-otp.model.js";
 import { User } from "./user.model.js";
-import type { LoginUserInput, RegisterUserInput } from "./user.validation.js";
+import type {
+  LoginUserInput,
+  RegisterUserInput,
+  ResendSignupOtpInput,
+  VerifySignupOtpInput,
+} from "./user.validation.js";
 
 const jwtKey = new TextEncoder().encode(env.JWT_SECRET);
 const dummyHashPromise = bcrypt.hash(randomUUID(), 12);
+
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_EXPIRES_MINUTES = 10;
+
+function hashOtpCode(email: string, code: string) {
+  return createHash("sha256")
+    .update(`${email}:${code}:${env.JWT_SECRET}`)
+    .digest("hex");
+}
+
+function generateOtpCode() {
+  return String(randomInt(0, 1_000_000)).padStart(6, "0");
+}
 
 function generateTemporaryPassword(length = 12): string {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
@@ -38,19 +60,156 @@ async function issueUserToken(user: AuthenticatedUser): Promise<string> {
     .sign(jwtKey);
 }
 
-export async function registerUser(input: RegisterUserInput) {
+/**
+ * Step 1 of signup — store pending profile + email a 6-digit OTP.
+ * Account is only created after verifySignupOtp.
+ */
+export async function startSignupWithOtp(input: RegisterUserInput) {
   const existing = await User.findOne({ email: input.email }).lean();
   if (existing) {
     throw new AppError(409, "An account with this email already exists");
   }
 
+  const pending = await SignupOtp.findOne({ email: input.email });
+  if (pending?.lastSentAt) {
+    const waitMs = OTP_RESEND_COOLDOWN_MS - (Date.now() - pending.lastSentAt.getTime());
+    if (waitMs > 0) {
+      throw new AppError(
+        429,
+        `Please wait ${Math.ceil(waitMs / 1000)}s before requesting another code`,
+      );
+    }
+  }
+
+  const code = generateOtpCode();
   const passwordHash = await bcrypt.hash(input.password, 12);
-  const user = await User.create({
+  const codeHash = hashOtpCode(input.email, code);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + OTP_TTL_MS);
+
+  await SignupOtp.findOneAndUpdate(
+    { email: input.email },
+    {
+      $set: {
+        name: input.name,
+        phone: input.phone,
+        passwordHash,
+        codeHash,
+        attempts: 0,
+        lastSentAt: now,
+        expiresAt,
+      },
+    },
+    { upsert: true, new: true },
+  );
+
+  const mail = await sendSignupOtpEmail({
+    to: input.email,
     name: input.name,
-    email: input.email,
-    passwordHash,
-    phone: input.phone,
+    code,
+    expiresMinutes: OTP_EXPIRES_MINUTES,
   });
+
+  return {
+    email: input.email,
+    expiresInSeconds: Math.floor(OTP_TTL_MS / 1000),
+    emailSent: mail.sent,
+    message: mail.sent
+      ? "We sent a verification code to your email."
+      : "Verification code prepared (SMTP not configured — check server logs in development).",
+  };
+}
+
+export async function resendSignupOtp(input: ResendSignupOtpInput) {
+  const pending = await SignupOtp.findOne({ email: input.email });
+  if (!pending) {
+    throw new AppError(404, "No pending signup found for this email. Start signup again.");
+  }
+
+  if (pending.expiresAt.getTime() < Date.now()) {
+    await SignupOtp.deleteOne({ _id: pending._id });
+    throw new AppError(410, "Your signup session expired. Please start again.");
+  }
+
+  const waitMs = OTP_RESEND_COOLDOWN_MS - (Date.now() - pending.lastSentAt.getTime());
+  if (waitMs > 0) {
+    throw new AppError(
+      429,
+      `Please wait ${Math.ceil(waitMs / 1000)}s before requesting another code`,
+    );
+  }
+
+  const code = generateOtpCode();
+  pending.codeHash = hashOtpCode(input.email, code);
+  pending.attempts = 0;
+  pending.lastSentAt = new Date();
+  pending.expiresAt = new Date(Date.now() + OTP_TTL_MS);
+  await pending.save();
+
+  const mail = await sendSignupOtpEmail({
+    to: input.email,
+    name: pending.name,
+    code,
+    expiresMinutes: OTP_EXPIRES_MINUTES,
+  });
+
+  return {
+    email: input.email,
+    expiresInSeconds: Math.floor(OTP_TTL_MS / 1000),
+    emailSent: mail.sent,
+    message: mail.sent
+      ? "A new verification code was sent to your email."
+      : "New code prepared (SMTP not configured — check server logs in development).",
+  };
+}
+
+/**
+ * Step 2 of signup — verify OTP and create the user account.
+ */
+export async function verifySignupOtp(input: VerifySignupOtpInput) {
+  const pending = await SignupOtp.findOne({ email: input.email });
+  if (!pending) {
+    throw new AppError(404, "No pending signup found. Please start signup again.");
+  }
+
+  if (pending.expiresAt.getTime() < Date.now()) {
+    await SignupOtp.deleteOne({ _id: pending._id });
+    throw new AppError(410, "Verification code expired. Please start signup again.");
+  }
+
+  if (pending.attempts >= OTP_MAX_ATTEMPTS) {
+    await SignupOtp.deleteOne({ _id: pending._id });
+    throw new AppError(429, "Too many incorrect codes. Please start signup again.");
+  }
+
+  const expected = hashOtpCode(input.email, input.code);
+  if (expected !== pending.codeHash) {
+    pending.attempts += 1;
+    await pending.save();
+    const left = OTP_MAX_ATTEMPTS - pending.attempts;
+    throw new AppError(
+      400,
+      left > 0
+        ? `Invalid code. ${left} attempt${left === 1 ? "" : "s"} remaining.`
+        : "Too many incorrect codes. Please start signup again.",
+    );
+  }
+
+  const existing = await User.findOne({ email: input.email }).lean();
+  if (existing) {
+    await SignupOtp.deleteOne({ _id: pending._id });
+    throw new AppError(409, "An account with this email already exists");
+  }
+
+  const user = await User.create({
+    name: pending.name,
+    email: pending.email,
+    passwordHash: pending.passwordHash,
+    phone: pending.phone,
+    accountSource: "self",
+  });
+
+  await SignupOtp.deleteOne({ _id: pending._id });
 
   const identity: AuthenticatedUser = {
     id: user.id,
