@@ -1,10 +1,15 @@
 import type { RequestHandler } from "express";
-import type { AuthenticatedUser } from "../users/user.service.js";
+import { sendGuestCredentialsEmail } from "../notifications/email.service.js";
+import {
+  ensureGuestAccount,
+  type AuthenticatedUser,
+} from "../users/user.service.js";
 import {
   createTaxiBooking,
   estimateFare,
   getPublicTaxiBooking,
 } from "./taxi.service.js";
+import { getTaxiSettings } from "./taxi-settings.service.js";
 import {
   createTaxiBookingSchema,
   fareEstimateSchema,
@@ -23,6 +28,11 @@ function customerDetailsFromUser(user: AuthenticatedUser, input: {
   };
 }
 
+export const getPublicTaxiSettings: RequestHandler = async (_request, response) => {
+  const settings = await getTaxiSettings();
+  response.status(200).json({ success: true, data: settings });
+};
+
 export const postFareEstimate: RequestHandler = async (request, response) => {
   const input = fareEstimateSchema.parse(request.body);
   const estimate = await estimateFare(input);
@@ -30,14 +40,40 @@ export const postFareEstimate: RequestHandler = async (request, response) => {
 };
 
 export const postTaxiBooking: RequestHandler = async (request, response) => {
-  if (!request.user) {
-    response.status(401).json({ success: false, message: "Sign in required to book a ride" });
-    return;
+  const input = createTaxiBookingSchema.parse(request.body);
+
+  let accountCreated = false;
+  let token: string | undefined;
+  let plainPassword: string | undefined;
+  let user: AuthenticatedUser;
+
+  if (request.user) {
+    user = request.user;
+  } else {
+    const guestAccount = await ensureGuestAccount({
+      name: input.customerName,
+      email: input.customerEmail,
+      phone: input.customerPhone,
+    });
+    user = guestAccount.user;
+    token = guestAccount.token;
+    accountCreated = guestAccount.accountCreated;
+    plainPassword = guestAccount.plainPassword;
   }
 
-  const input = createTaxiBookingSchema.parse(request.body);
-  const customer = customerDetailsFromUser(request.user, input);
-  const booking = await createTaxiBooking({ ...input, ...customer }, request.user.id);
+  const customer = customerDetailsFromUser(user, input);
+  const booking = await createTaxiBooking({ ...input, ...customer }, user.id);
+
+  if (accountCreated && plainPassword) {
+    await sendGuestCredentialsEmail({
+      to: user.email,
+      name: user.name,
+      password: plainPassword,
+      bookingReference: booking.bookingReference,
+    }).catch((error) => {
+      console.error("[email] Failed to send guest credentials", error);
+    });
+  }
 
   response.status(201).json({
     success: true,
@@ -53,6 +89,15 @@ export const postTaxiBooking: RequestHandler = async (request, response) => {
       pickupLocation: booking.pickupLocation,
       dropoffLocation: booking.dropoffLocation,
       serviceType: booking.serviceType,
+      accountCreated,
+      token: token ?? null,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        phone: user.phone ?? null,
+        role: "user" as const,
+      },
       driver:
         booking.driverId && typeof booking.driverId === "object"
           ? {

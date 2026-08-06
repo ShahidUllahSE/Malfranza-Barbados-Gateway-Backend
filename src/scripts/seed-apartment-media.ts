@@ -1,31 +1,41 @@
+import fs from "node:fs";
 import path from "node:path";
 import { cloudinary } from "../config/cloudinary.js";
 import { connectDatabase, disconnectDatabase } from "../config/database.js";
 import { Apartment } from "../modules/apartments/apartment.model.js";
 
-const frontendAssets = "D:\\Malfranza Barbados Gateway\\src\\assets";
+const newImageDir = "D:\\Malfranza Barbados Gateway\\src\\assets\\newimage";
 
-const sourceImages = {
-  garden: "ChatGPT Image Jul 2, 2026, 10_49_00 PM.png",
-  oneBedroom: "ChatGPT Image Jul 2, 2026, 10_49_34 PM.png",
-  kitchen: "ChatGPT Image Jul 2, 2026, 10_49_20 PM.png",
-  tropical: "ChatGPT Image Jul 2, 2026, 10_49_27 PM.png",
-  familyInterior: "ChatGPT Image Jul 2, 2026, 10_49_43 PM.png",
-  bathroom: "ChatGPT Image Jul 2, 2026, 10_49_13 PM.png",
-} as const;
+/** Max photos per property on Cloudinary (keeps seed fast). Local frontend still serves full galleries. */
+const MAX_PER_SLUG = 12;
 
-async function uploadSource(name: keyof typeof sourceImages): Promise<string> {
-  const result = await cloudinary.uploader.upload(
-    path.join(frontendAssets, sourceImages[name]),
-    {
-      folder: "malfranza/apartments",
-      public_id: name,
-      overwrite: true,
-      unique_filename: false,
-      resource_type: "image",
-    },
-  );
+const galleries: Array<{ slug: string; match: RegExp }> = [
+  { slug: "apartment-1", match: /apartment number 1/i },
+  { slug: "apartment-2", match: /apartment number 2/i },
+  { slug: "apartment-3", match: /apartment number 3/i },
+  { slug: "apartment-a-and-b", match: /a and b/i },
+];
 
+function listFiles(match: RegExp): string[] {
+  if (!fs.existsSync(newImageDir)) {
+    throw new Error(`newimage folder not found: ${newImageDir}`);
+  }
+  return fs
+    .readdirSync(newImageDir)
+    .filter((name) => /\.(jpe?g|png)$/i.test(name) && match.test(name))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
+    .slice(0, MAX_PER_SLUG)
+    .map((name) => path.join(newImageDir, name));
+}
+
+async function uploadFile(filePath: string, publicId: string): Promise<string> {
+  const result = await cloudinary.uploader.upload(filePath, {
+    folder: "malfranza/apartments",
+    public_id: publicId,
+    overwrite: true,
+    unique_filename: false,
+    resource_type: "image",
+  });
   return cloudinary.url(result.public_id, {
     secure: true,
     width: 2000,
@@ -38,27 +48,28 @@ async function uploadSource(name: keyof typeof sourceImages): Promise<string> {
 
 async function seedApartmentMedia(): Promise<void> {
   await connectDatabase();
+  let uploaded = 0;
 
-  const entries = await Promise.all(
-    (Object.keys(sourceImages) as Array<keyof typeof sourceImages>).map(
-      async (name) => [name, await uploadSource(name)] as const,
-    ),
-  );
-  const images = Object.fromEntries(entries) as Record<keyof typeof sourceImages, string>;
-
-  const galleries: Record<string, string[]> = {
-    "garden-view": [images.garden, images.kitchen, images.bathroom, images.oneBedroom],
-    "city-view": [images.oneBedroom, images.kitchen, images.bathroom, images.familyInterior],
-    "modern-comfort": [images.kitchen, images.oneBedroom, images.bathroom, images.tropical],
-    "tropical-escape": [images.tropical, images.kitchen, images.bathroom, images.garden],
-    "family-stay": [images.familyInterior, images.kitchen, images.bathroom, images.garden],
-  };
-
-  for (const [slug, photos] of Object.entries(galleries)) {
-    await Apartment.updateOne({ slug }, { $set: { photos } });
+  for (const gallery of galleries) {
+    const files = listFiles(gallery.match);
+    if (files.length === 0) {
+      console.warn(`No images for ${gallery.slug}`);
+      continue;
+    }
+    const photos: string[] = [];
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i]!;
+      const base = path.basename(file, path.extname(file)).replace(/[^a-zA-Z0-9_-]+/g, "-").toLowerCase();
+      const url = await uploadFile(file, `${gallery.slug}/${base}`);
+      photos.push(url);
+      uploaded += 1;
+      console.log(`  ↑ ${gallery.slug} (${i + 1}/${files.length})`);
+    }
+    await Apartment.updateOne({ slug: gallery.slug }, { $set: { photos } });
+    console.log(`Updated ${gallery.slug} with ${photos.length} photos`);
   }
 
-  console.log(`Cloudinary media seed complete (${entries.length} images uploaded)`);
+  console.log(`Cloudinary media seed complete (${uploaded} images uploaded)`);
 }
 
 seedApartmentMedia()

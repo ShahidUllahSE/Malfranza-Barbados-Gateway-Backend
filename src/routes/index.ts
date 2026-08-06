@@ -12,6 +12,7 @@ import { mediaRouter } from "../modules/media/media.routes.js";
 import { adminTaxiRouter } from "../modules/taxi/admin-taxi.routes.js";
 import { taxiRouter } from "../modules/taxi/taxi.routes.js";
 import { userRouter } from "../modules/users/user.routes.js";
+import { adminBeds24Router } from "../modules/beds24/admin-beds24.routes.js";
 
 export const apiRouter = Router();
 
@@ -36,3 +37,4 @@ apiRouter.use("/admin/taxi", adminTaxiRouter);
 apiRouter.use("/admin/drivers", adminDriverRouter);
 apiRouter.use("/admin/enquiries", adminEnquiryRouter);
 apiRouter.use("/admin/media", mediaRouter);
+apiRouter.use("/admin/beds24", adminBeds24Router);

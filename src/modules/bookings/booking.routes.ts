@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { authenticateUser } from "../../middleware/user-auth.js";
+import { optionalAuthenticateUser } from "../../middleware/user-auth.js";
 import {
   getAvailability,
   getBookingByReference,
@@ -11,5 +11,5 @@ export const bookingRouter = Router();
 
 bookingRouter.get("/availability", getAvailability);
 bookingRouter.get("/occupancy", getOccupancy);
-bookingRouter.post("/", authenticateUser, postBooking);
+bookingRouter.post("/", optionalAuthenticateUser, postBooking);
 bookingRouter.get("/:reference", getBookingByReference);

@@ -6,10 +6,12 @@ import {
   listTaxiBookings,
   updateTaxiBookingStatus,
 } from "./taxi.service.js";
+import { getTaxiSettings, updateTaxiSettings } from "./taxi-settings.service.js";
 import {
   adminTaxiListQuerySchema,
   assignTaxiDriverSchema,
   taxiIdParamSchema,
+  updateTaxiSettingsSchema,
   updateTaxiStatusSchema,
 } from "./taxi.validation.js";
 
@@ -23,6 +25,17 @@ export const getAdminTaxiBooking: RequestHandler = async (request, response) => 
   const { id } = taxiIdParamSchema.parse(request.params);
   const booking = await getTaxiBookingForAdmin(id);
   response.status(200).json({ success: true, data: booking });
+};
+
+export const getAdminTaxiSettings: RequestHandler = async (_request, response) => {
+  const settings = await getTaxiSettings();
+  response.status(200).json({ success: true, data: settings });
+};
+
+export const putAdminTaxiSettings: RequestHandler = async (request, response) => {
+  const input = updateTaxiSettingsSchema.parse(request.body);
+  const settings = await updateTaxiSettings(input);
+  response.status(200).json({ success: true, data: settings });
 };
 
 export const patchTaxiBookingStatus: RequestHandler = async (request, response) => {

@@ -1,5 +1,12 @@
 import type { RequestHandler } from "express";
-import type { AuthenticatedUser } from "../users/user.service.js";
+import {
+  sendBookingConfirmationEmail,
+  sendGuestCredentialsEmail,
+} from "../notifications/email.service.js";
+import {
+  ensureGuestAccount,
+  type AuthenticatedUser,
+} from "../users/user.service.js";
 import {
   checkAvailability,
   createBooking,
@@ -46,14 +53,52 @@ export const getOccupancy: RequestHandler = async (request, response) => {
 };
 
 export const postBooking: RequestHandler = async (request, response) => {
-  if (!request.user) {
-    response.status(401).json({ success: false, message: "Sign in required to book" });
-    return;
+  const input = createBookingSchema.parse(request.body);
+
+  let accountCreated = false;
+  let token: string | undefined;
+  let plainPassword: string | undefined;
+  let user: AuthenticatedUser;
+
+  if (request.user) {
+    user = request.user;
+  } else {
+    const guestAccount = await ensureGuestAccount({
+      name: input.guestName,
+      email: input.guestEmail,
+      phone: input.guestPhone,
+    });
+    user = guestAccount.user;
+    token = guestAccount.token;
+    accountCreated = guestAccount.accountCreated;
+    plainPassword = guestAccount.plainPassword;
   }
 
-  const input = createBookingSchema.parse(request.body);
-  const guest = guestDetailsFromUser(request.user, input);
-  const booking = await createBooking({ ...input, ...guest }, request.user.id);
+  const guest = guestDetailsFromUser(user, input);
+  const booking = await createBooking({ ...input, ...guest }, user.id);
+
+  if (accountCreated && plainPassword) {
+    await sendGuestCredentialsEmail({
+      to: user.email,
+      name: user.name,
+      password: plainPassword,
+      bookingReference: booking.bookingReference,
+    }).catch((error) => {
+      console.error("[email] Failed to send guest credentials", error);
+    });
+  }
+
+  await sendBookingConfirmationEmail({
+    to: guest.guestEmail,
+    name: guest.guestName,
+    bookingReference: booking.bookingReference,
+    checkIn: String(booking.checkIn).slice(0, 10),
+    checkOut: String(booking.checkOut).slice(0, 10),
+    apartmentName: booking.apartmentName,
+    totalAmount: Number(booking.totalAmount),
+  }).catch((error) => {
+    console.error("[email] Failed to send booking confirmation", error);
+  });
 
   response.status(201).json({
     success: true,
@@ -63,6 +108,15 @@ export const postBooking: RequestHandler = async (request, response) => {
       paymentStatus: booking.paymentStatus,
       nights: booking.nights,
       totalAmount: booking.totalAmount,
+      accountCreated,
+      token: token ?? null,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        phone: user.phone ?? null,
+        role: "user" as const,
+      },
     },
   });
 };

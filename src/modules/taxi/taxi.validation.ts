@@ -61,6 +61,16 @@ export const assignTaxiDriverSchema = z.object({
   driverId: z.string().refine(Types.ObjectId.isValid, "Invalid driver ID"),
 });
 
+export const updateTaxiSettingsSchema = z.object({
+  fareFor1Guest: z.number().nonnegative(),
+  fareFor2Guests: z.number().nonnegative(),
+  fareFor3Guests: z.number().nonnegative(),
+  fareFor4PlusGuests: z.number().nonnegative(),
+  perKmUsd: z.number().nonnegative(),
+  minimumFareUsd: z.number().nonnegative(),
+});
+
 export type FareEstimateInput = z.infer<typeof fareEstimateSchema>;
 export type CreateTaxiBookingInput = z.infer<typeof createTaxiBookingSchema>;
 export type AdminTaxiListQuery = z.infer<typeof adminTaxiListQuerySchema>;
+export type UpdateTaxiSettingsInput = z.infer<typeof updateTaxiSettingsSchema>;

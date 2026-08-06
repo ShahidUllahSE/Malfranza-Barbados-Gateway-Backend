@@ -14,6 +14,14 @@ const userSchema = new Schema(
     },
     passwordHash: { type: String, required: true, select: false },
     phone: { type: String, trim: true, maxlength: 40 },
+    /** How the account was created — guest_booking accounts get a temporary password emailed. */
+    accountSource: {
+      type: String,
+      enum: ["self", "guest_booking"],
+      default: "self",
+      required: true,
+    },
+    mustChangePassword: { type: Boolean, default: false, required: true },
     isActive: { type: Boolean, default: true, required: true },
     lastLoginAt: { type: Date },
   },

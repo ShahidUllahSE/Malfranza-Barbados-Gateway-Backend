@@ -5,6 +5,11 @@ import { AppError } from "../../middleware/error-handler.js";
 import { Driver } from "../drivers/driver.model.js";
 import { notifyDriverOfAssignment } from "./driver-notify.js";
 import { TaxiBooking, type TaxiBookingRecord } from "./taxi.model.js";
+import {
+  calculateFareFromSettings,
+  getTaxiSettings,
+  guestFareFromSettings,
+} from "./taxi-settings.service.js";
 import type {
   AdminTaxiListQuery,
   CreateTaxiBookingInput,
@@ -23,24 +28,19 @@ function ensureBarbados(address: string): string {
   return /barbados/i.test(address) ? address : `${address}, Barbados`;
 }
 
-function calculateFare(distanceKm: number, passengers: number): number {
-  const extraPassengers = Math.max(0, passengers - 4);
-  const fare =
-    env.TAXI_BASE_FARE_USD +
-    distanceKm * env.TAXI_PER_KM_USD +
-    extraPassengers * env.TAXI_EXTRA_PASSENGER_USD;
-  return Math.max(env.TAXI_MINIMUM_FARE_USD, Math.round(fare));
-}
-
 export async function estimateFare(input: FareEstimateInput) {
+  const settings = await getTaxiSettings();
+
   if (!env.GOOGLE_MAPS_API_KEY) {
     const distanceKm = 12;
     return {
       distanceKm,
       durationMinutes: 25,
-      estimatedFare: calculateFare(distanceKm, input.passengers),
+      estimatedFare: calculateFareFromSettings(settings, distanceKm, input.passengers),
       currency: "USD" as const,
       estimated: true as const,
+      guestFare: guestFareFromSettings(settings, input.passengers),
+      perKmUsd: settings.perKmUsd,
     };
   }
 
@@ -88,13 +88,15 @@ export async function estimateFare(input: FareEstimateInput) {
       durationSeconds && Number.isFinite(durationSeconds)
         ? Math.round(durationSeconds / 60)
         : undefined,
-    estimatedFare: calculateFare(distanceKm, input.passengers),
+    estimatedFare: calculateFareFromSettings(settings, distanceKm, input.passengers),
     currency: "USD" as const,
+    guestFare: guestFareFromSettings(settings, input.passengers),
+    perKmUsd: settings.perKmUsd,
   };
 }
 
 export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: string) {
-  const { estimated: _estimated, ...estimate } = await estimateFare(input);
+  const estimate = await estimateFare(input);
   const pickupDate = toUtcDate(input.pickupDate);
 
   const booking = await TaxiBooking.create({
@@ -103,7 +105,9 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
     pickupDate,
     customerEmail: input.customerEmail.toLowerCase(),
     bookingReference: generateReference(),
-    ...estimate,
+    distanceKm: estimate.distanceKm,
+    durationMinutes: estimate.durationMinutes,
+    estimatedFare: estimate.estimatedFare,
   });
 
   const freeDriver = await findFreeDriver(pickupDate);

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { jwtVerify, SignJWT } from "jose";
 import { env } from "../../config/env.js";
@@ -10,6 +10,16 @@ import type { LoginUserInput, RegisterUserInput } from "./user.validation.js";
 
 const jwtKey = new TextEncoder().encode(env.JWT_SECRET);
 const dummyHashPromise = bcrypt.hash(randomUUID(), 12);
+
+function generateTemporaryPassword(length = 12): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = randomBytes(length);
+  let password = "";
+  for (let i = 0; i < length; i += 1) {
+    password += alphabet[bytes[i]! % alphabet.length];
+  }
+  return password;
+}
 
 export type AuthenticatedUser = {
   id: string;
@@ -51,6 +61,73 @@ export async function registerUser(input: RegisterUserInput) {
   };
 
   return { user: identity, token: await issueUserToken(identity) };
+}
+
+/**
+ * Find or create a guest account for checkout.
+ * - Existing users: reuse (do not reset password / re-email credentials).
+ * - New users: generate a temporary password and return it once for emailing.
+ */
+export async function ensureGuestAccount(input: {
+  name: string;
+  email: string;
+  phone?: string;
+}) {
+  const email = input.email.trim().toLowerCase();
+  const name = input.name.trim() || "Guest";
+  const phone = input.phone?.trim() || undefined;
+
+  const existing = await User.findOne({ email });
+  if (existing) {
+    if (!existing.isActive) {
+      throw new AppError(403, "This account is inactive. Please contact support.");
+    }
+    if (phone && !existing.phone) {
+      existing.phone = phone;
+      await existing.save();
+    }
+
+    const identity: AuthenticatedUser = {
+      id: existing.id,
+      email: existing.email,
+      name: existing.name,
+      phone: existing.phone ?? undefined,
+      role: "user",
+    };
+
+    return {
+      user: identity,
+      token: await issueUserToken(identity),
+      accountCreated: false as const,
+      plainPassword: undefined as string | undefined,
+    };
+  }
+
+  const plainPassword = generateTemporaryPassword(12);
+  const passwordHash = await bcrypt.hash(plainPassword, 12);
+  const user = await User.create({
+    name,
+    email,
+    phone,
+    passwordHash,
+    accountSource: "guest_booking",
+    mustChangePassword: true,
+  });
+
+  const identity: AuthenticatedUser = {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    phone: user.phone ?? undefined,
+    role: "user",
+  };
+
+  return {
+    user: identity,
+    token: await issueUserToken(identity),
+    accountCreated: true as const,
+    plainPassword,
+  };
 }
 
 export async function loginUser(input: LoginUserInput) {
