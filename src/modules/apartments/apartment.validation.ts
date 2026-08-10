@@ -33,6 +33,7 @@ const apartmentFields = {
   sizeSqM: z.number().positive().optional(),
   amenities: z.array(z.string().trim().min(1).max(80)).max(100).default([]),
   photos: z.array(z.string().trim().min(1).max(2000)).max(100).default([]),
+  unitsExclusive: z.boolean().default(false),
   units: z.array(apartmentUnitSchema).max(20).default([]),
   isActive: z.boolean().default(true),
 };
@@ -53,6 +54,7 @@ export const updateApartmentSchema = z
     sizeSqM: apartmentFields.sizeSqM,
     amenities: apartmentFields.amenities.optional(),
     photos: apartmentFields.photos.optional(),
+    unitsExclusive: apartmentFields.unitsExclusive.optional(),
     units: apartmentFields.units.optional(),
     isActive: apartmentFields.isActive.optional(),
   })

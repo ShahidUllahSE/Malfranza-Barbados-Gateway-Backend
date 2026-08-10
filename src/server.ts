@@ -9,6 +9,17 @@ async function startServer(): Promise<void> {
     console.log(`API listening on http://localhost:${env.PORT}`);
   });
 
+  server.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(
+        `Port ${env.PORT} is already in use. Stop the other process (e.g. another project's backend) or set PORT in .env.`,
+      );
+    } else {
+      console.error("HTTP server error", error);
+    }
+    process.exit(1);
+  });
+
   async function shutdown(signal: string): Promise<void> {
     console.log(`${signal} received, shutting down`);
     server.close(async () => {

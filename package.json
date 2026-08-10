@@ -12,6 +12,8 @@
     "seed:apartment-media": "tsx src/scripts/seed-apartment-media.ts",
     "seed:user": "tsx src/scripts/seed-user.ts",
     "seed:driver": "tsx src/scripts/seed-driver.ts",
+    "seed:admin": "tsx src/scripts/seed-admin.ts",
+    "reminders:run": "tsx src/scripts/run-reminders.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

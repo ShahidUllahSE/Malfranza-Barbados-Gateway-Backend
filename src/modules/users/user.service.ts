@@ -4,7 +4,7 @@ import { jwtVerify, SignJWT } from "jose";
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { Booking } from "../bookings/booking.model.js";
-import { sendSignupOtpEmail } from "../notifications/email.service.js";
+import { sendPasswordResetEmail, sendSignupOtpEmail } from "../notifications/email.service.js";
 import { TaxiBooking } from "../taxi/taxi.model.js";
 import { SignupOtp } from "./signup-otp.model.js";
 import { User } from "./user.model.js";
@@ -223,6 +223,44 @@ export async function verifySignupOtp(input: VerifySignupOtpInput) {
 }
 
 /**
+ * Checkout "Create an account" path — create account with the guest's chosen password
+ * and sign them in immediately (no temp password email).
+ */
+export async function registerCheckoutAccount(input: RegisterUserInput) {
+  const email = input.email.trim().toLowerCase();
+  const existing = await User.findOne({ email }).lean();
+  if (existing) {
+    throw new AppError(
+      409,
+      "An account with this email already exists. Sign in, or continue as guest with this email.",
+    );
+  }
+
+  // Drop any incomplete OTP signup for this email so checkout registration can proceed.
+  await SignupOtp.deleteMany({ email });
+
+  const passwordHash = await bcrypt.hash(input.password, 12);
+  const user = await User.create({
+    name: input.name.trim(),
+    email,
+    phone: input.phone,
+    passwordHash,
+    accountSource: "self",
+    mustChangePassword: false,
+  });
+
+  const identity: AuthenticatedUser = {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    phone: user.phone ?? undefined,
+    role: "user",
+  };
+
+  return { user: identity, token: await issueUserToken(identity) };
+}
+
+/**
  * Find or create a guest account for checkout.
  * - Existing users: reuse (do not reset password / re-email credentials).
  * - New users: generate a temporary password and return it once for emailing.
@@ -382,4 +420,52 @@ export async function listUserTaxiBookings(userId: string) {
     .limit(100)
     .populate("driverId", "name email phone vehicleLabel")
     .lean();
+}
+
+export async function requestUserPasswordReset(emailRaw: string) {
+  const email = emailRaw.trim().toLowerCase();
+  const user = await User.findOne({ email }).lean();
+  if (!user || !user.isActive) {
+    return { ok: true as const };
+  }
+
+  const token = await new SignJWT({ purpose: "user_password_reset", email })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(user._id.toString())
+    .setIssuedAt()
+    .setExpirationTime("1h")
+    .sign(jwtKey);
+
+  const resetUrl = `${env.FRONTEND_URL.replace(/\/$/, "")}/?auth=reset&token=${encodeURIComponent(token)}`;
+  await sendPasswordResetEmail({
+    to: user.email,
+    name: user.name,
+    resetUrl,
+    expiresMinutes: 60,
+    kind: "guest",
+  });
+  return { ok: true as const };
+}
+
+export async function resetUserPassword(token: string, newPassword: string) {
+  let payload: { sub?: string; purpose?: string };
+  try {
+    const verified = await jwtVerify(token, jwtKey);
+    payload = verified.payload as { sub?: string; purpose?: string };
+  } catch {
+    throw new AppError(400, "This reset link is invalid or has expired");
+  }
+  if (payload.purpose !== "user_password_reset" || !payload.sub) {
+    throw new AppError(400, "This reset link is invalid or has expired");
+  }
+
+  const user = await User.findById(payload.sub).select("+passwordHash");
+  if (!user || !user.isActive) {
+    throw new AppError(400, "This reset link is invalid or has expired");
+  }
+
+  user.passwordHash = await bcrypt.hash(newPassword, 12);
+  user.mustChangePassword = false;
+  await user.save();
+  return { ok: true as const };
 }

@@ -5,6 +5,11 @@ import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { loginUser, type AuthenticatedUser } from "../users/user.service.js";
 import { loginDriver, type AuthenticatedDriver } from "../drivers/driver.service.js";
+import {
+  loginAgency,
+  type AuthenticatedAgency,
+} from "../agencies/agency.service.js";
+import { TravelAgency } from "../agencies/agency.model.js";
 import { Admin } from "./admin.model.js";
 import { Driver } from "../drivers/driver.model.js";
 import type { BootstrapAdminInput, LoginInput } from "./auth.validation.js";
@@ -42,6 +47,16 @@ export type SessionLoginResult =
       token: string;
       user: AuthenticatedUser;
       admin?: never;
+      driver?: never;
+      agency?: never;
+    }
+  | {
+      kind: "agency";
+      role: "agency";
+      token: string;
+      agency: AuthenticatedAgency;
+      admin?: never;
+      user?: never;
       driver?: never;
     };
 
@@ -101,8 +116,8 @@ export async function login(input: LoginInput) {
 }
 
 /**
- * Single sign-in for guests, drivers, and staff.
- * Precedence: Admin → Driver → User (first matching email collection wins).
+ * Single sign-in for guests, drivers, staff, and travel agencies.
+ * Precedence: Admin → Driver → Agency → User.
  */
 export async function loginSession(input: LoginInput): Promise<SessionLoginResult> {
   const adminExists = await Admin.exists({ email: input.email });
@@ -115,6 +130,12 @@ export async function loginSession(input: LoginInput): Promise<SessionLoginResul
   if (driverExists) {
     const { driver, token } = await loginDriver(input);
     return { kind: "driver", role: "driver", token, driver };
+  }
+
+  const agencyExists = await TravelAgency.exists({ email: input.email });
+  if (agencyExists) {
+    const { agency, token } = await loginAgency(input);
+    return { kind: "agency", role: "agency", token, agency };
   }
 
   const { user, token } = await loginUser(input);

@@ -23,9 +23,30 @@ function customerDetailsFromUser(user: AuthenticatedUser, input: {
 }) {
   return {
     customerName: input.customerName.trim() || user.name,
-    customerEmail: user.email,
+    customerEmail: (input.customerEmail.trim() || user.email).toLowerCase(),
     customerPhone: input.customerPhone.trim() || user.phone || input.customerPhone,
   };
+}
+
+async function resolveTaxiCustomer(
+  sessionUser: AuthenticatedUser | undefined,
+  input: { customerName: string; customerEmail: string; customerPhone: string },
+) {
+  const customerEmail = input.customerEmail.trim().toLowerCase();
+  if (sessionUser && sessionUser.email.toLowerCase() === customerEmail) {
+    return {
+      user: sessionUser,
+      token: undefined as string | undefined,
+      accountCreated: false as const,
+      plainPassword: undefined as string | undefined,
+    };
+  }
+
+  return ensureGuestAccount({
+    name: input.customerName,
+    email: customerEmail,
+    phone: input.customerPhone,
+  });
 }
 
 export const getPublicTaxiSettings: RequestHandler = async (_request, response) => {
@@ -42,24 +63,11 @@ export const postFareEstimate: RequestHandler = async (request, response) => {
 export const postTaxiBooking: RequestHandler = async (request, response) => {
   const input = createTaxiBookingSchema.parse(request.body);
 
-  let accountCreated = false;
-  let token: string | undefined;
-  let plainPassword: string | undefined;
-  let user: AuthenticatedUser;
-
-  if (request.user) {
-    user = request.user;
-  } else {
-    const guestAccount = await ensureGuestAccount({
-      name: input.customerName,
-      email: input.customerEmail,
-      phone: input.customerPhone,
-    });
-    user = guestAccount.user;
-    token = guestAccount.token;
-    accountCreated = guestAccount.accountCreated;
-    plainPassword = guestAccount.plainPassword;
-  }
+  const guestAccount = await resolveTaxiCustomer(request.user, input);
+  const user = guestAccount.user;
+  const token = guestAccount.token;
+  const accountCreated = guestAccount.accountCreated;
+  const plainPassword = guestAccount.plainPassword;
 
   const customer = customerDetailsFromUser(user, input);
   const booking = await createTaxiBooking({ ...input, ...customer }, user.id);
@@ -67,7 +75,7 @@ export const postTaxiBooking: RequestHandler = async (request, response) => {
   if (accountCreated && plainPassword) {
     await sendGuestCredentialsEmail({
       to: user.email,
-      name: user.name,
+      name: customer.customerName,
       password: plainPassword,
       bookingReference: booking.bookingReference,
     }).catch((error) => {

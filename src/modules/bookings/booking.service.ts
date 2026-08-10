@@ -2,6 +2,21 @@ import { randomBytes } from "node:crypto";
 import mongoose, { Types, type ClientSession, type QueryFilter } from "mongoose";
 import { AppError } from "../../middleware/error-handler.js";
 import { Apartment } from "../apartments/apartment.model.js";
+import {
+  type PricedRoomType,
+  roomTypeFromBedrooms,
+  staySubtotal,
+  averageNightly,
+  catalogFromRate,
+} from "../apartments/pricing.js";
+import {
+  AGENCY_COMMISSION_RATE,
+} from "../agencies/agency.model.js";
+import { findActiveAgencyByCode } from "../agencies/agency.service.js";
+import {
+  sendAdminBookingChangedEmail,
+  sendStayStatusEmail,
+} from "../notifications/email.service.js";
 import { Booking, BookingLock, type BookingRecord } from "./booking.model.js";
 import type {
   AdminBookingListQuery,
@@ -29,12 +44,16 @@ function generateBookingReference(): string {
   return `MFZ-${year}-${suffix}`;
 }
 
+/**
+ * @param treatAsWholeApartment — exclusive inventory (1-BR vs 2-BR config): any stay blocks all configs.
+ */
 async function findConflict(
   apartmentId: Types.ObjectId,
   checkIn: Date,
   checkOut: Date,
   unitIds?: Types.ObjectId[],
   session?: ClientSession,
+  treatAsWholeApartment = false,
 ): Promise<boolean> {
   const filter: QueryFilter<BookingRecord> = {
     apartmentId,
@@ -42,7 +61,7 @@ async function findConflict(
     checkIn: { $lt: checkOut },
     checkOut: { $gt: checkIn },
   };
-  if (unitIds && unitIds.length > 0) {
+  if (!treatAsWholeApartment && unitIds && unitIds.length > 0) {
     filter.$or = [
       { unitId: { $in: unitIds } },
       { unitIds: { $in: unitIds } },
@@ -65,7 +84,10 @@ async function findConflict(
 function bookingBlocksUnit(
   booking: { unitId?: unknown; unitIds?: unknown[] | null },
   unitId: string,
+  /** Exclusive parent inventory: any booking on the property blocks every config. */
+  exclusive = false,
 ): boolean {
+  if (exclusive) return true;
   const ids = Array.isArray(booking.unitIds) ? booking.unitIds.map(String) : [];
   if (booking.unitId) ids.push(String(booking.unitId));
   // No unit info at all means the whole apartment is booked.
@@ -91,6 +113,7 @@ export async function checkAvailability(input: AvailabilityQuery): Promise<boole
   const apartment = await Apartment.findOne({ _id: apartmentId, isActive: true });
   if (!apartment) throw new AppError(404, "Apartment not found");
 
+  const exclusive = apartment.unitsExclusive === true;
   let selectedUnitIds: Types.ObjectId[] | undefined;
   if (apartment.units.length > 0) {
     const requested = input.unitIds ?? (input.unitId ? [input.unitId] : []);
@@ -100,6 +123,9 @@ export async function checkAvailability(input: AvailabilityQuery): Promise<boole
       if (!unit || !unit.isActive) throw new AppError(404, "Apartment unit not found");
       return new Types.ObjectId(id);
     });
+    if (exclusive && selectedUnitIds.length > 1) {
+      throw new AppError(400, "This apartment can only be booked as one configuration at a time");
+    }
   }
 
   return !(await findConflict(
@@ -107,6 +133,8 @@ export async function checkAvailability(input: AvailabilityQuery): Promise<boole
     toUtcDate(input.checkIn),
     toUtcDate(input.checkOut),
     selectedUnitIds,
+    undefined,
+    exclusive,
   ));
 }
 
@@ -115,7 +143,7 @@ export async function listApartmentOccupancy(input: {
   checkOut?: string;
 }) {
   const apartments = await Apartment.find({ isActive: true })
-    .select("_id slug name subtitle units")
+    .select("_id slug name subtitle units unitsExclusive type bedrooms pricePerNight")
     .lean();
 
   const today = toUtcDate(new Date().toISOString().slice(0, 10));
@@ -148,6 +176,7 @@ export async function listApartmentOccupancy(input: {
   return apartments.map((apartment) => {
     const key = String(apartment._id);
     const ranges = byApartment.get(key) ?? [];
+    const exclusive = apartment.unitsExclusive === true;
     const current = ranges.find(
       (booking) => booking.checkIn <= today && booking.checkOut > today,
     );
@@ -159,16 +188,23 @@ export async function listApartmentOccupancy(input: {
       ? conflictsSearch.length === 0
       : !current;
 
+    const roomType: PricedRoomType =
+      apartment.type === "two-bedroom" || apartment.type === "three-bedroom"
+        ? "two-bedroom"
+        : "one-bedroom";
+    const fromRate = catalogFromRate(roomType);
+
     return {
       apartmentId: key,
       slug: apartment.slug,
       name: apartment.name,
       subtitle: apartment.subtitle ?? null,
+      unitsExclusive: exclusive,
       available: apartment.units.length > 0
         ? apartment.units.some((unit) => {
             if (!unit.isActive) return false;
             return !conflictsSearch.some(
-              (booking) => bookingBlocksUnit(booking, String(unit._id)),
+              (booking) => bookingBlocksUnit(booking, String(unit._id), exclusive),
             );
           })
         : availableForRequest,
@@ -196,7 +232,7 @@ export async function listApartmentOccupancy(input: {
       })),
       units: apartment.units.map((unit) => {
         const unitRanges = ranges.filter(
-          (booking) => bookingBlocksUnit(booking, String(unit._id)),
+          (booking) => bookingBlocksUnit(booking, String(unit._id), exclusive),
         );
         const unitCurrent = unitRanges.find(
           (booking) => booking.checkIn <= today && booking.checkOut > today,
@@ -204,13 +240,14 @@ export async function listApartmentOccupancy(input: {
         const unitConflicts = unitRanges.some(
           (booking) => booking.checkIn < searchEnd && booking.checkOut > searchStart,
         );
+        const unitRoomType = roomTypeFromBedrooms(unit.bedrooms);
         return {
           id: String(unit._id),
           name: unit.name,
           bedrooms: unit.bedrooms,
           bathrooms: unit.bathrooms,
           maxGuests: unit.maxGuests,
-          pricePerNight: unit.pricePerNight,
+          pricePerNight: catalogFromRate(unitRoomType),
           isActive: unit.isActive,
           available: unit.isActive && (hasSearchDates ? !unitConflicts : !unitCurrent),
           occupiedNow: !!unitCurrent,
@@ -221,6 +258,7 @@ export async function listApartmentOccupancy(input: {
           })),
         };
       }),
+      fromRate,
     };
   });
 }
@@ -230,6 +268,8 @@ export async function createBooking(input: CreateBookingInput, userId?: string) 
   const checkIn = toUtcDate(input.checkIn);
   const checkOut = toUtcDate(input.checkOut);
   const nights = calculateNights(checkIn, checkOut);
+  const checkInIso = input.checkIn.slice(0, 10);
+  const checkOutIso = input.checkOut.slice(0, 10);
 
   await ensureBookingLock(apartmentId);
 
@@ -247,11 +287,14 @@ export async function createBooking(input: CreateBookingInput, userId?: string) 
         throw new AppError(400, `This apartment allows a maximum of ${apartment.maxGuests} guests`);
       }
 
+      const exclusive = apartment.unitsExclusive === true;
+
       type SelectedUnit = {
         _id: Types.ObjectId;
         name: string;
         maxGuests: number;
         pricePerNight: number;
+        bedrooms: number;
         isActive: boolean;
       };
       let selectedUnits: SelectedUnit[] = [];
@@ -260,12 +303,20 @@ export async function createBooking(input: CreateBookingInput, userId?: string) 
         if (requestedIds.length === 0) {
           throw new AppError(400, "Select at least one unit for this apartment");
         }
+        if (exclusive && requestedIds.length > 1) {
+          throw new AppError(
+            400,
+            "Choose either the one-bedroom or two-bedroom configuration — not both",
+          );
+        }
         selectedUnits = requestedIds.map((id) => {
           const unit = apartment.units.id(id);
           if (!unit || !unit.isActive) throw new AppError(404, "Apartment unit not found");
           return unit;
         });
-        const combinedMaxGuests = selectedUnits.reduce((sum, unit) => sum + unit.maxGuests, 0);
+        const combinedMaxGuests = exclusive
+          ? selectedUnits[0]!.maxGuests
+          : selectedUnits.reduce((sum, unit) => sum + unit.maxGuests, 0);
         if (input.guests > combinedMaxGuests) {
           const label = selectedUnits.length === 1
             ? selectedUnits[0]!.name
@@ -283,46 +334,83 @@ export async function createBooking(input: CreateBookingInput, userId?: string) 
         checkOut,
         selectedUnitIds.length > 0 ? selectedUnitIds : undefined,
         session,
+        exclusive,
       )) {
         throw new AppError(
           409,
-          selectedUnits.length === 1
-            ? `${selectedUnits[0]!.name} is unavailable for the selected dates`
-            : selectedUnits.length > 1
-              ? "One or more of the selected units are unavailable for the selected dates"
-              : "The apartment is unavailable for the selected dates",
+          exclusive
+            ? "This apartment is unavailable for the selected dates (its one- and two-bedroom options share inventory)"
+            : selectedUnits.length === 1
+              ? `${selectedUnits[0]!.name} is unavailable for the selected dates`
+              : selectedUnits.length > 1
+                ? "One or more of the selected units are unavailable for the selected dates"
+                : "The apartment is unavailable for the selected dates",
         );
       }
 
-      // Combined nightly rate: sum of all selected unit rates (or apartment rate).
-      const nightlyRate = selectedUnits.length > 0
-        ? money(selectedUnits.reduce((sum, unit) => sum + unit.pricePerNight, 0))
-        : apartment.pricePerNight;
-      const staySubtotal = money(nightlyRate * nights);
+      // Seasonal engine: type from unit bedroom count or apartment type.
+      const pricedType: PricedRoomType =
+        selectedUnits.length > 0
+          ? roomTypeFromBedrooms(selectedUnits[0]!.bedrooms)
+          : apartment.bedrooms >= 2
+            ? "two-bedroom"
+            : "one-bedroom";
+
+      const staySubtotalAmount = money(staySubtotal(pricedType, checkInIso, checkOutIso));
+      const nightlyRate = nights > 0
+        ? money(averageNightly(pricedType, checkInIso, checkOutIso))
+        : catalogFromRate(pricedType);
       const serviceFee = 0;
-      const totalAmount = money(staySubtotal + serviceFee + (input.taxi?.fare ?? 0));
+      const totalAmount = money(staySubtotalAmount + serviceFee + (input.taxi?.fare ?? 0));
+
+      let agencyAttribution:
+        | {
+            agencyId: Types.ObjectId;
+            agencyCode: string;
+            agencyName: string;
+            commissionRate: number;
+            commissionAmount: number;
+          }
+        | undefined;
+
+      if (input.agencyCode) {
+        const agency = await findActiveAgencyByCode(input.agencyCode);
+        if (!agency) {
+          throw new AppError(400, "Invalid or inactive travel agency code");
+        }
+        const rate = Number(agency.commissionRate ?? AGENCY_COMMISSION_RATE);
+        agencyAttribution = {
+          agencyId: agency._id as Types.ObjectId,
+          agencyCode: agency.agencyCode,
+          agencyName: agency.agencyName,
+          commissionRate: rate,
+          // 10% of stay (room nights) only — taxi is excluded.
+          commissionAmount: money(staySubtotalAmount * rate),
+        };
+      }
 
       const booking = new Booking({
-        ...input,
-        userId: userId ? new Types.ObjectId(userId) : undefined,
+        guestName: input.guestName,
+        guestEmail: input.guestEmail.toLowerCase(),
+        guestPhone: input.guestPhone,
+        guests: input.guests,
+        specialRequests: input.specialRequests,
         apartmentId,
         unitId: selectedUnitIds.length === 1 ? selectedUnitIds[0] : undefined,
         unitIds: selectedUnitIds.length > 0 ? selectedUnitIds : undefined,
         unitName: selectedUnits.length > 0
           ? selectedUnits.map((unit) => unit.name).join(" + ")
           : undefined,
-        apartmentName: apartment.subtitle
-          ? `${apartment.name} — ${apartment.subtitle}`
-          : apartment.name,
+        apartmentName: apartment.name,
         nightlyRate,
         checkIn,
         checkOut,
         nights,
-        staySubtotal,
+        staySubtotal: staySubtotalAmount,
         serviceFee,
         totalAmount,
         bookingReference: generateBookingReference(),
-        guestEmail: input.guestEmail.toLowerCase(),
+        userId: userId ? new Types.ObjectId(userId) : undefined,
         paymentStatus: input.paymentStatus ?? "unpaid",
         paymentReference: input.paymentReference,
         taxi: input.taxi
@@ -331,6 +419,7 @@ export async function createBooking(input: CreateBookingInput, userId?: string) 
               date: toUtcDate(input.taxi.date),
             }
           : undefined,
+        ...(agencyAttribution ?? {}),
       });
 
       return booking.save({ session });
@@ -377,6 +466,8 @@ export async function listBookings(input: AdminBookingListQuery) {
       { bookingReference: search },
       { guestName: search },
       { guestEmail: search },
+      { agencyCode: search },
+      { agencyName: search },
     ];
   }
 
@@ -423,6 +514,7 @@ export async function updateBookingStatus(
   const booking = await Booking.findById(id);
   if (!booking) throw new AppError(404, "Booking not found");
 
+  const previous = booking.status;
   if (booking.status !== nextStatus) {
     const allowed = STATUS_TRANSITIONS[booking.status] as readonly string[];
     if (!allowed.includes(nextStatus)) {
@@ -430,6 +522,38 @@ export async function updateBookingStatus(
     }
     booking.status = nextStatus;
     await booking.save();
+  }
+
+  if (previous !== nextStatus && (nextStatus === "cancelled" || nextStatus === "confirmed" || nextStatus === "checked_in")) {
+    const changeSummary =
+      nextStatus === "cancelled"
+        ? "Booking cancelled"
+        : nextStatus === "confirmed"
+          ? "Booking confirmed"
+          : `Status updated to ${nextStatus.replaceAll("_", " ")}`;
+
+    await sendStayStatusEmail({
+      to: booking.guestEmail,
+      name: booking.guestName,
+      bookingReference: booking.bookingReference,
+      status: nextStatus,
+      apartmentName: booking.apartmentName,
+      checkIn: String(booking.checkIn).slice(0, 10),
+      checkOut: String(booking.checkOut).slice(0, 10),
+      changeSummary,
+    }).catch((error) => {
+      console.error("[email] Failed to send stay status email", error);
+    });
+
+    if (nextStatus === "cancelled") {
+      await sendAdminBookingChangedEmail({
+        bookingReference: booking.bookingReference,
+        action: "cancelled",
+        summary: `${booking.apartmentName}, ${String(booking.checkIn).slice(0, 10)} → ${String(booking.checkOut).slice(0, 10)} · Guest ${booking.guestName}`,
+      }).catch((error) => {
+        console.error("[email] Failed to send admin booking cancel alert", error);
+      });
+    }
   }
 
   return booking;

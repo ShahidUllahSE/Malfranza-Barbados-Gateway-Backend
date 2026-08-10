@@ -28,6 +28,15 @@ export const resendSignupOtpSchema = z.object({
   email: z.email().max(254).transform((value) => value.toLowerCase()),
 });
 
+export const passwordResetRequestSchema = z.object({
+  email: z.email().max(254).transform((value) => value.toLowerCase()),
+});
+
+export const passwordResetConfirmSchema = z.object({
+  token: z.string().min(20).max(2000),
+  password: z.string().min(8).max(128),
+});
+
 export type RegisterUserInput = z.infer<typeof registerUserSchema>;
 export type LoginUserInput = z.infer<typeof loginUserSchema>;
 export type VerifySignupOtpInput = z.infer<typeof verifySignupOtpSchema>;

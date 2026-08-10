@@ -3,6 +3,13 @@ import { Types, type QueryFilter } from "mongoose";
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { Driver } from "../drivers/driver.model.js";
+import {
+  sendAdminNewTaxiBookingEmail,
+  sendDriverTripCancelledEmail,
+  sendPaymentReceiptEmail,
+  sendTaxiConfirmationEmail,
+  sendTaxiStatusEmail,
+} from "../notifications/email.service.js";
 import { notifyDriverOfAssignment } from "./driver-notify.js";
 import { TaxiBooking, type TaxiBookingRecord } from "./taxi.model.js";
 import {
@@ -116,7 +123,7 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
     booking.assignedAt = new Date();
     booking.status = "assigned";
     await booking.save();
-    notifyDriverOfAssignment({
+    await notifyDriverOfAssignment({
       driver: {
         name: freeDriver.name,
         email: freeDriver.email,
@@ -142,6 +149,67 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
   if (!populated) {
     throw new AppError(500, "Taxi booking could not be loaded after create");
   }
+
+  const driverDoc =
+    populated.driverId && typeof populated.driverId === "object"
+      ? (populated.driverId as {
+          name?: string;
+          phone?: string;
+          vehicleLabel?: string | null;
+        })
+      : null;
+
+  const pickupDateIso = String(populated.pickupDate).slice(0, 10);
+  const flightMatch = populated.notes?.match(/Flight[:\s]+([A-Z0-9]+)/i);
+  const flightNumber = flightMatch?.[1];
+
+  await sendTaxiConfirmationEmail({
+    to: populated.customerEmail,
+    name: populated.customerName,
+    bookingReference: populated.bookingReference,
+    serviceType: populated.serviceType,
+    pickupLocation: populated.pickupLocation,
+    dropoffLocation: populated.dropoffLocation,
+    pickupDate: pickupDateIso,
+    pickupTime: populated.pickupTime,
+    estimatedFare: Number(populated.estimatedFare),
+    currency: "USD",
+    passengers: Number(populated.passengers),
+    flightNumber: flightNumber ?? undefined,
+    driverName: driverDoc?.name ?? null,
+    driverPhone: driverDoc?.phone ?? null,
+    vehicleLabel: driverDoc?.vehicleLabel ?? null,
+  }).catch((error) => {
+    console.error("[email] Failed to send taxi confirmation", error);
+  });
+
+  await sendPaymentReceiptEmail({
+    to: populated.customerEmail,
+    name: populated.customerName,
+    bookingReference: populated.bookingReference,
+    totalAmount: Number(populated.estimatedFare),
+    paymentMethod: "Card / demo checkout",
+    stayLabel: undefined,
+    taxiAmount: Number(populated.estimatedFare),
+  }).catch((error) => {
+    console.error("[email] Failed to send taxi payment receipt", error);
+  });
+
+  await sendAdminNewTaxiBookingEmail({
+    bookingReference: populated.bookingReference,
+    customerName: populated.customerName,
+    customerEmail: populated.customerEmail,
+    customerPhone: populated.customerPhone,
+    serviceType: populated.serviceType,
+    pickupLocation: populated.pickupLocation,
+    dropoffLocation: populated.dropoffLocation,
+    pickupDate: pickupDateIso,
+    pickupTime: populated.pickupTime,
+    estimatedFare: Number(populated.estimatedFare),
+    driverName: driverDoc?.name ?? null,
+  }).catch((error) => {
+    console.error("[email] Failed to send admin taxi alert", error);
+  });
 
   return populated;
 }
@@ -284,10 +352,20 @@ const STATUS_TRANSITIONS: Record<TaxiStatus, readonly TaxiStatus[]> = {
 };
 
 export async function updateTaxiBookingStatus(id: string, nextStatus: TaxiStatus) {
-  const booking = await TaxiBooking.findById(id);
+  const booking = await TaxiBooking.findById(id).populate(
+    "driverId",
+    "name email phone vehicleLabel",
+  );
   if (!booking) throw new AppError(404, "Taxi booking not found");
 
-  const previousDriverId = booking.driverId?.toString();
+  const previousDriverId = booking.driverId
+    ? String(
+        typeof booking.driverId === "object" && booking.driverId !== null && "_id" in booking.driverId
+          ? (booking.driverId as { _id: unknown })._id
+          : booking.driverId,
+      )
+    : undefined;
+  const previousStatus = booking.status;
 
   if (booking.status !== nextStatus) {
     const allowed = STATUS_TRANSITIONS[booking.status as TaxiStatus] ?? [];
@@ -299,6 +377,46 @@ export async function updateTaxiBookingStatus(id: string, nextStatus: TaxiStatus
     }
     booking.status = nextStatus;
     await booking.save();
+  }
+
+  if (
+    previousStatus !== nextStatus &&
+    (nextStatus === "cancelled" ||
+      nextStatus === "confirmed" ||
+      nextStatus === "assigned" ||
+      nextStatus === "en_route" ||
+      nextStatus === "completed")
+  ) {
+    const driverDoc =
+      booking.driverId && typeof booking.driverId === "object"
+        ? (booking.driverId as { name?: string; email?: string })
+        : null;
+    const driverName = driverDoc?.name ? String(driverDoc.name) : null;
+
+    await sendTaxiStatusEmail({
+      to: booking.customerEmail,
+      name: booking.customerName,
+      bookingReference: booking.bookingReference,
+      status: nextStatus,
+      pickupDate: String(booking.pickupDate).slice(0, 10),
+      pickupTime: booking.pickupTime,
+      driverName: driverName || null,
+    }).catch((error) => {
+      console.error("[email] Failed to send taxi status email", error);
+    });
+
+    if (nextStatus === "cancelled" && driverDoc?.email && driverDoc.name) {
+      await sendDriverTripCancelledEmail({
+        to: String(driverDoc.email),
+        driverName: String(driverDoc.name),
+        pickupDate: String(booking.pickupDate).slice(0, 10),
+        pickupTime: booking.pickupTime,
+        pickupLocation: booking.pickupLocation,
+        dropoffLocation: booking.dropoffLocation,
+      }).catch((error) => {
+        console.error("[email] Failed to send driver trip cancelled", error);
+      });
+    }
   }
 
   // When a trip ends, try to auto-book the next waiting request for a free driver.
@@ -335,7 +453,7 @@ export async function assignTaxiDriver(bookingId: string, driverId: string) {
   booking.status = "assigned";
   await booking.save();
 
-  notifyDriverOfAssignment({
+  await notifyDriverOfAssignment({
     driver: {
       name: driver.name,
       email: driver.email,
@@ -351,6 +469,18 @@ export async function assignTaxiDriver(bookingId: string, driverId: string) {
       customerName: booking.customerName,
       customerPhone: booking.customerPhone,
     },
+  });
+
+  await sendTaxiStatusEmail({
+    to: booking.customerEmail,
+    name: booking.customerName,
+    bookingReference: booking.bookingReference,
+    status: "assigned",
+    pickupDate: String(booking.pickupDate).slice(0, 10),
+    pickupTime: booking.pickupTime,
+    driverName: driver.name,
+  }).catch((error) => {
+    console.error("[email] Failed to send guest taxi assignment update", error);
   });
 
   return TaxiBooking.findById(booking.id)

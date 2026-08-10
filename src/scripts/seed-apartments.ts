@@ -1,103 +1,130 @@
 import { connectDatabase, disconnectDatabase } from "../config/database.js";
+import { catalogFromRate } from "../modules/apartments/pricing.js";
 import { Apartment } from "../modules/apartments/apartment.model.js";
 
-/** Replaces old demo listings with the real Malfranza photo-set properties. */
+/**
+ * Inventory: three independent 1-BR apartments + one flexible 2-BR
+ * that can be booked as 1-BR or full 2-BR (mutually exclusive configs).
+ */
+
+const AMENITIES_1BR = [
+  "Air Conditioning",
+  "Kitchen",
+  "Smart TV",
+  "Workspace",
+  "Kettle",
+  "Microwave",
+  "Wi-Fi",
+] as const;
+
+const AMENITIES_2BR = [
+  "Air Conditioning",
+  "Kitchen",
+  "Smart TV",
+  "Workspace",
+  "Kettle",
+  "Microwave",
+  "Washer/Dryer",
+  "Wi-Fi",
+] as const;
+
 const apartments = [
   {
-    name: "Malfranza Apartment Number 1",
+    name: "Tropical Escape",
     slug: "apartment-1",
-    subtitle: "Garden courtyard stay",
-    description:
-      "Comfortable self-catering apartment in our lime-green courtyard building in Barbados. Private patio access, tropical landscaping, and on-site parking — ideal for couples or a short city base.",
-    type: "one-bedroom",
-    pricePerNight: 110,
+    subtitle: "Room 1",
+    description: "One-bedroom self-catering apartment at Malfranza, Oistins.",
+    type: "one-bedroom" as const,
+    pricePerNight: catalogFromRate("one-bedroom"),
     maxGuests: 2,
     bedrooms: 1,
     bathrooms: 1,
     sizeSqM: 55,
-    amenities: ["Wi-Fi", "Air Conditioning", "Kitchen", "Smart TV", "Parking", "Workspace"],
+    amenities: [...AMENITIES_1BR],
     photos: [],
     isActive: true,
+    unitsExclusive: false,
     units: [],
   },
   {
-    name: "Malfranza Apartment Number 2",
+    name: "Island Breeze",
     slug: "apartment-2",
-    subtitle: "Bright bedroom suite",
-    description:
-      "Light-filled apartment with a restful bedroom, air conditioning, and Malfranza’s signature tropical finishes. A quiet, well-kept stay close to everything Oistins has to offer.",
-    type: "one-bedroom",
-    pricePerNight: 110,
+    subtitle: "Room 2",
+    description: "One-bedroom self-catering apartment at Malfranza, Oistins.",
+    type: "one-bedroom" as const,
+    pricePerNight: catalogFromRate("one-bedroom"),
     maxGuests: 2,
     bedrooms: 1,
     bathrooms: 1,
     sizeSqM: 54,
-    amenities: ["Wi-Fi", "Air Conditioning", "Kitchen", "Smart TV", "Parking", "Workspace"],
+    amenities: [...AMENITIES_1BR],
     photos: [],
     isActive: true,
+    unitsExclusive: false,
     units: [],
   },
   {
-    name: "Malfranza Apartment Number 3",
+    name: "Palm Retreat",
     slug: "apartment-3",
-    subtitle: "Tropical double room",
-    description:
-      "Cheerful double bedroom suite with split air conditioning, tropical décor, and tiled floors for easy beach-day living. Perfect for a relaxed Barbados getaway.",
-    type: "one-bedroom",
-    pricePerNight: 105,
+    subtitle: "Room 3",
+    description: "One-bedroom self-catering apartment at Malfranza, Oistins.",
+    type: "one-bedroom" as const,
+    pricePerNight: catalogFromRate("one-bedroom"),
     maxGuests: 2,
     bedrooms: 1,
     bathrooms: 1,
     sizeSqM: 52,
-    amenities: ["Wi-Fi", "Air Conditioning", "Kitchen", "Smart TV", "Parking"],
+    amenities: [...AMENITIES_1BR],
     photos: [],
     isActive: true,
+    unitsExclusive: false,
     units: [],
   },
   {
-    name: "Malfranza Apartments A & B",
-    slug: "apartment-a-and-b",
-    subtitle: "Two-unit residence",
+    name: "Sunset Suite",
+    slug: "apartment-4",
+    subtitle: "Room 4",
     description:
-      "A flexible Malfranza property with two independently bookable units — Unit A and Unit B. Book one for a couple’s stay, or both when travelling as a family or small group.",
-    type: "two-bedroom",
-    pricePerNight: 110,
+      "Flexible two-bedroom residence. Book as a one-bedroom stay or as the full two-bedroom apartment — never both for the same dates.",
+    type: "two-bedroom" as const,
+    pricePerNight: catalogFromRate("two-bedroom"),
     maxGuests: 4,
     bedrooms: 2,
     bathrooms: 2,
     sizeSqM: 90,
-    amenities: ["Wi-Fi", "Air Conditioning", "Kitchen", "Smart TV", "Parking", "Workspace"],
+    amenities: [...AMENITIES_2BR],
     photos: [],
     isActive: true,
+    /** Parent/child: any booking on either config blocks the other. */
+    unitsExclusive: true,
     units: [
       {
-        name: "Unit A",
-        description: "Self-contained unit A with private facilities.",
+        name: "One-bedroom",
+        description: "",
         bedrooms: 1,
         bathrooms: 1,
         maxGuests: 2,
-        pricePerNight: 110,
+        pricePerNight: catalogFromRate("one-bedroom"),
         isActive: true,
       },
       {
-        name: "Unit B",
-        description: "Self-contained unit B with private facilities.",
-        bedrooms: 1,
-        bathrooms: 1,
-        maxGuests: 2,
-        pricePerNight: 110,
+        name: "Two-bedroom",
+        description: "",
+        bedrooms: 2,
+        bathrooms: 2,
+        maxGuests: 4,
+        pricePerNight: catalogFromRate("two-bedroom"),
         isActive: true,
       },
     ],
   },
-] as const;
+];
 
 const KEEP_SLUGS = new Set(apartments.map((a) => a.slug));
 
 async function seedApartments(): Promise<void> {
   await connectDatabase();
 
-  // Deactivate any older demo apartments that are not in the new set.
   const deact = await Apartment.updateMany(
     { slug: { $nin: [...KEEP_SLUGS] } },
     { $set: { isActive: false } },
@@ -119,11 +146,11 @@ async function seedApartments(): Promise<void> {
           sizeSqM: apartment.sizeSqM,
           amenities: [...apartment.amenities],
           isActive: true,
-          // Drop old Cloudinary ChatGPT photos so the site uses local newimage galleries.
-          photos: [],
+          unitsExclusive: apartment.unitsExclusive,
+          // Keep existing gallery URLs if admin already set photos; seed leaves empty.
           units: apartment.units.map((u) => ({ ...u })),
         },
-        $setOnInsert: { slug: apartment.slug },
+        $setOnInsert: { slug: apartment.slug, photos: [] },
       },
       { upsert: true },
     );

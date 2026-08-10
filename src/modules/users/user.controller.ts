@@ -5,12 +5,17 @@ import {
   listUserBookings,
   listUserTaxiBookings,
   loginUser,
+  registerCheckoutAccount,
+  requestUserPasswordReset,
   resendSignupOtp,
+  resetUserPassword,
   startSignupWithOtp,
   verifySignupOtp,
 } from "./user.service.js";
 import {
   loginUserSchema,
+  passwordResetConfirmSchema,
+  passwordResetRequestSchema,
   registerUserSchema,
   resendSignupOtpSchema,
   verifySignupOtpSchema,
@@ -21,6 +26,13 @@ export const postRegister: RequestHandler = async (request, response) => {
   const input = registerUserSchema.parse(request.body);
   const result = await startSignupWithOtp(input);
   response.status(200).json({ success: true, data: result });
+};
+
+/** Checkout signup — create account with chosen password and return a session token. */
+export const postRegisterCheckout: RequestHandler = async (request, response) => {
+  const input = registerUserSchema.parse(request.body);
+  const result = await registerCheckoutAccount(input);
+  response.status(201).json({ success: true, data: result });
 };
 
 export const postVerifySignupOtp: RequestHandler = async (request, response) => {
@@ -39,6 +51,24 @@ export const postLogin: RequestHandler = async (request, response) => {
   const input = loginUserSchema.parse(request.body);
   const result = await loginUser(input);
   response.status(200).json({ success: true, data: result });
+};
+
+export const postPasswordResetRequest: RequestHandler = async (request, response) => {
+  const input = passwordResetRequestSchema.parse(request.body);
+  await requestUserPasswordReset(input.email);
+  response.status(200).json({
+    success: true,
+    message: "If that email is registered, a reset link has been sent.",
+  });
+};
+
+export const postPasswordResetConfirm: RequestHandler = async (request, response) => {
+  const input = passwordResetConfirmSchema.parse(request.body);
+  await resetUserPassword(input.token, input.password);
+  response.status(200).json({
+    success: true,
+    message: "Password updated. You can sign in with your new password.",
+  });
 };
 
 export const getMe: RequestHandler = async (request, response) => {

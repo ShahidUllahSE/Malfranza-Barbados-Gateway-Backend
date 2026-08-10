@@ -46,6 +46,11 @@ const apartmentSchema = new Schema(
       type: [{ type: String, trim: true, maxlength: 2000 }],
       default: [],
     },
+    /**
+     * When true, bookable configs (e.g. 1-BR vs full 2-BR on the same property)
+     * are mutually exclusive: booking any unit blocks all units for those dates.
+     */
+    unitsExclusive: { type: Boolean, required: true, default: false },
     units: {
       type: [apartmentUnitSchema],
       default: [],

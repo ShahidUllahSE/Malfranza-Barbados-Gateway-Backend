@@ -1,4 +1,5 @@
 import type { DriverRecord } from "../drivers/driver.model.js";
+import { sendDriverAssignmentEmail } from "../notifications/email.service.js";
 
 type AssignmentNotifyInput = {
   driver: {
@@ -19,10 +20,9 @@ type AssignmentNotifyInput = {
 };
 
 /**
- * Demo-friendly driver alert. Logs a clear assignment message.
- * Swap this for SMS/WhatsApp/email when those providers are configured.
+ * Driver assignment alert — email + console (for local demos without SMTP).
  */
-export function notifyDriverOfAssignment(input: AssignmentNotifyInput): void {
+export async function notifyDriverOfAssignment(input: AssignmentNotifyInput): Promise<void> {
   const date =
     typeof input.booking.pickupDate === "string"
       ? input.booking.pickupDate.slice(0, 10)
@@ -47,6 +47,21 @@ export function notifyDriverOfAssignment(input: AssignmentNotifyInput): void {
   ];
 
   console.info(lines.join("\n"));
+
+  await sendDriverAssignmentEmail({
+    to: input.driver.email,
+    driverName: input.driver.name,
+    bookingReference: input.booking.bookingReference,
+    serviceType: input.booking.serviceType,
+    pickupLocation: input.booking.pickupLocation,
+    dropoffLocation: input.booking.dropoffLocation,
+    pickupDate: date,
+    pickupTime: input.booking.pickupTime,
+    customerName: input.booking.customerName,
+    customerPhone: input.booking.customerPhone,
+  }).catch((error) => {
+    console.error("[email] Failed to email driver assignment", error);
+  });
 }
 
 export function driverNotifyPayloadFromDocs(

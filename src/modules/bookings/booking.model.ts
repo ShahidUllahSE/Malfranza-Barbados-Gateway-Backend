@@ -73,6 +73,18 @@ const bookingSchema = new Schema(
       index: true,
     },
     paymentReference: { type: String, trim: true },
+    /** Travel-agency attribution (optional). Code is validated at booking time. */
+    agencyId: {
+      type: Schema.Types.ObjectId,
+      ref: "TravelAgency",
+      index: true,
+    },
+    agencyCode: { type: String, trim: true, uppercase: true, maxlength: 40, index: true },
+    agencyName: { type: String, trim: true, maxlength: 160 },
+    /** Snapshot of rate used when booking was placed (usually 10%). */
+    commissionRate: { type: Number, min: 0, max: 1 },
+    /** 10% of stay subtotal when agency-sourced (excludes taxi). */
+    commissionAmount: { type: Number, min: 0, default: 0 },
   },
   {
     timestamps: true,
@@ -82,6 +94,7 @@ const bookingSchema = new Schema(
 
 bookingSchema.index({ apartmentId: 1, checkIn: 1, checkOut: 1 });
 bookingSchema.index({ apartmentId: 1, unitId: 1, checkIn: 1, checkOut: 1 });
+bookingSchema.index({ agencyCode: 1, checkIn: 1 });
 
 export type BookingRecord = InferSchemaType<typeof bookingSchema>;
 export const Booking = model<BookingRecord>("Booking", bookingSchema);

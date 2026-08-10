@@ -54,6 +54,21 @@ export const createBookingSchema = z
     guestPhone: z.string().trim().min(6).max(40),
     guests: z.number().int().min(1).max(20),
     specialRequests: z.string().trim().max(2000).optional(),
+    /** Travel agency booking/affiliate code — auto-generated for each signed-up agency. */
+    agencyCode: z.preprocess(
+      (value) => {
+        if (value == null || value === "") return undefined;
+        if (typeof value !== "string") return value;
+        const trimmed = value.trim().toUpperCase();
+        return trimmed === "" ? undefined : trimmed;
+      },
+      z
+        .string()
+        .min(4)
+        .max(40)
+        .regex(/^AG-[A-Z0-9]+$/, "Agency code must look like AG-XXXXXXXX")
+        .optional(),
+    ),
     /** Demo/checkout payment — defaults to unpaid when omitted. */
     paymentStatus: z.enum(["unpaid", "paid"]).optional(),
     paymentReference: z.string().trim().min(1).max(200).optional(),
