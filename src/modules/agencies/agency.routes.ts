@@ -7,12 +7,11 @@ import {
   postAgencyPasswordResetConfirm,
   postAgencyPasswordResetRequest,
   postLoginAgency,
-  postRegisterAgency,
 } from "./agency.controller.js";
 
 export const agencyRouter = Router();
 
-agencyRouter.post("/register", postRegisterAgency);
+// No public self-registration — agencies are created by admin only.
 agencyRouter.post("/login", postLoginAgency);
 agencyRouter.post("/password-reset/request", postAgencyPasswordResetRequest);
 agencyRouter.post("/password-reset/confirm", postAgencyPasswordResetConfirm);

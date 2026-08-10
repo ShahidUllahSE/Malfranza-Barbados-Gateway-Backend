@@ -48,6 +48,13 @@ const envSchema = z.object({
   BEDS24_API_BASE: z.string().trim().url().default("https://api.beds24.com/v2"),
   BEDS24_REFRESH_TOKEN: z.preprocess(emptyToUndefined, z.string().trim().optional()),
   BEDS24_ACCESS_TOKEN: z.preprocess(emptyToUndefined, z.string().trim().optional()),
+  /** sandbox | live — default sandbox for testing */
+  PAYPAL_MODE: z.enum(["sandbox", "live"]).default("sandbox"),
+  PAYPAL_CLIENT_ID: z.preprocess(emptyToUndefined, z.string().trim().optional()),
+  PAYPAL_CLIENT_SECRET: z.preprocess(emptyToUndefined, z.string().trim().optional()),
+  /** Aliases some people paste from the dashboard */
+  CLIENT_ID: z.preprocess(emptyToUndefined, z.string().trim().optional()),
+  SECRET_KEY: z.preprocess(emptyToUndefined, z.string().trim().optional()),
 });
 
 const parsed = envSchema.parse(process.env);
@@ -64,4 +71,6 @@ export const env = {
   SMTP_FROM:
     parsed.SMTP_FROM ?? (smtpUser ? `Malfranza <${smtpUser}>` : undefined),
   ADMIN_NOTIFY_EMAIL: parsed.ADMIN_NOTIFY_EMAIL ?? smtpUser,
+  PAYPAL_CLIENT_ID: parsed.PAYPAL_CLIENT_ID ?? parsed.CLIENT_ID,
+  PAYPAL_CLIENT_SECRET: parsed.PAYPAL_CLIENT_SECRET ?? parsed.SECRET_KEY,
 };

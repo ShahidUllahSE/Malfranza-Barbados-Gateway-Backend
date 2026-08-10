@@ -15,6 +15,7 @@ import { userRouter } from "../modules/users/user.routes.js";
 import { adminBeds24Router } from "../modules/beds24/admin-beds24.routes.js";
 import { agencyRouter } from "../modules/agencies/agency.routes.js";
 import { adminAgencyRouter } from "../modules/agencies/admin-agency.routes.js";
+import { paymentRouter } from "../modules/payments/payment.routes.js";
 
 export const apiRouter = Router();
 
@@ -34,6 +35,7 @@ apiRouter.use("/enquiries", enquiryRouter);
 apiRouter.use("/users", userRouter);
 apiRouter.use("/drivers", driverRouter);
 apiRouter.use("/agencies", agencyRouter);
+apiRouter.use("/payments", paymentRouter);
 apiRouter.use("/admin/apartments", adminApartmentRouter);
 apiRouter.use("/admin/bookings", adminBookingRouter);
 apiRouter.use("/admin/agencies", adminAgencyRouter);

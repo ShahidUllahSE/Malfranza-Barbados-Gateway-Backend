@@ -1,16 +1,27 @@
 import type { RequestHandler } from "express";
 import {
   adminCommissionReport,
+  createAgencyByAdmin,
   listAgenciesAdmin,
   setAgencyActive,
 } from "./agency.service.js";
-import { agencyCommissionQuerySchema } from "./agency.validation.js";
+import { agencyCommissionQuerySchema, registerAgencySchema } from "./agency.validation.js";
 import { z } from "zod";
 import { Types } from "mongoose";
 
 export const getAdminAgencies: RequestHandler = async (_request, response) => {
   const items = await listAgenciesAdmin();
   response.status(200).json({ success: true, data: { items } });
+};
+
+export const postAdminCreateAgency: RequestHandler = async (request, response) => {
+  const input = registerAgencySchema.parse(request.body);
+  const result = await createAgencyByAdmin(input);
+  response.status(201).json({
+    success: true,
+    message: "Travel agency created",
+    data: result,
+  });
 };
 
 export const getAdminAgencyCommission: RequestHandler = async (request, response) => {

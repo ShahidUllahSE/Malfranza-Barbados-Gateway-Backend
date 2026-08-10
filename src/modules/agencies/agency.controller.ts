@@ -4,7 +4,6 @@ import {
   getAgencyProfile,
   listAgencyBookings,
   loginAgency,
-  registerAgency,
   requestAgencyPasswordReset,
   resetAgencyPassword,
 } from "./agency.service.js";
@@ -12,18 +11,7 @@ import {
   agencyPasswordResetConfirmSchema,
   agencyPasswordResetRequestSchema,
   loginAgencySchema,
-  registerAgencySchema,
 } from "./agency.validation.js";
-
-export const postRegisterAgency: RequestHandler = async (request, response) => {
-  const input = registerAgencySchema.parse(request.body);
-  const result = await registerAgency(input);
-  response.status(201).json({
-    success: true,
-    message: "Agency registered",
-    data: result,
-  });
-};
 
 export const postLoginAgency: RequestHandler = async (request, response) => {
   const input = loginAgencySchema.parse(request.body);

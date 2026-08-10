@@ -166,7 +166,7 @@ export const postBooking: RequestHandler = async (request, response) => {
       name: guest.guestName,
       bookingReference: booking.bookingReference,
       totalAmount,
-      paymentMethod: "Card / demo checkout",
+      paymentMethod: "PayPal",
       stayLabel: `${booking.apartmentName} (${booking.nights} night${booking.nights === 1 ? "" : "s"})`,
       stayAmount: staySubtotal,
       taxiAmount: hasTaxi ? taxiFare : undefined,
@@ -178,7 +178,7 @@ export const postBooking: RequestHandler = async (request, response) => {
       bookingReference: booking.bookingReference,
       amount: totalAmount,
       guestName: guest.guestName,
-      method: "Card / demo checkout",
+      method: "PayPal",
     }).catch((error) => {
       console.error("[email] Failed to send admin payment alert", error);
     });

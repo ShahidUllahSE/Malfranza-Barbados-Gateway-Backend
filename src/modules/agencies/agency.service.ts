@@ -6,7 +6,6 @@ import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { Booking, type BookingRecord } from "../bookings/booking.model.js";
 import {
-  sendAdminNewAgencySignupEmail,
   sendAgencyWelcomeEmail,
   sendPasswordResetEmail,
 } from "../notifications/email.service.js";
@@ -79,7 +78,7 @@ function toIdentity(agency: {
   };
 }
 
-export async function registerAgency(input: RegisterAgencyInput) {
+export async function createAgencyByAdmin(input: RegisterAgencyInput) {
   const email = input.email.trim().toLowerCase();
   const existing = await TravelAgency.findOne({ email }).lean();
   if (existing) {
@@ -111,20 +110,12 @@ export async function registerAgency(input: RegisterAgencyInput) {
     console.error("[email] Failed to send agency welcome", error);
   });
 
-  await sendAdminNewAgencySignupEmail({
-    agencyName: agency.agencyName,
-    contactName: agency.contactName,
-    email: agency.email,
-    phone: agency.phone,
-    agencyCode: agency.agencyCode,
-  }).catch((error) => {
-    console.error("[email] Failed to send admin agency signup alert", error);
-  });
+  return { agency: identity };
+}
 
-  return {
-    agency: identity,
-    token: await issueAgencyToken(identity),
-  };
+/** @deprecated Public self-signup — prefer createAgencyByAdmin */
+export async function registerAgency(input: RegisterAgencyInput) {
+  return createAgencyByAdmin(input);
 }
 
 export async function requestAgencyPasswordReset(emailRaw: string) {
