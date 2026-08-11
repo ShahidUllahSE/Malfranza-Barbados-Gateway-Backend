@@ -110,6 +110,7 @@ export async function createPayPalOrder(input: {
         shipping_preference: "NO_SHIPPING",
         user_action: "PAY_NOW",
         brand_name: "Malfranza Apartments & Taxi",
+        landing_page: "LOGIN",
       },
     }),
   });
