@@ -1,6 +1,7 @@
 import type { QueryFilter } from "mongoose";
 import { AppError } from "../../middleware/error-handler.js";
 import { Apartment, type ApartmentRecord } from "./apartment.model.js";
+import { uniquePhotoUrls, withUniquePhotos } from "./photo-utils.js";
 import type {
   AdminApartmentQuery,
   CreateApartmentInput,
@@ -25,13 +26,14 @@ export async function listPublicApartments(input: PublicApartmentQuery) {
   if (input.sort === "price-desc") sort = { pricePerNight: -1 };
   if (input.sort === "newest") sort = { createdAt: -1 };
 
-  return Apartment.find(filter).sort(sort).lean();
+  const apartments = await Apartment.find(filter).sort(sort).lean();
+  return apartments.map(withUniquePhotos);
 }
 
 export async function getPublicApartment(slug: string) {
   const apartment = await Apartment.findOne({ slug, isActive: true }).lean();
   if (!apartment) throw new AppError(404, "Apartment not found");
-  return apartment;
+  return withUniquePhotos(apartment);
 }
 
 export async function listAdminApartments(input: AdminApartmentQuery) {
@@ -50,7 +52,7 @@ export async function listAdminApartments(input: AdminApartmentQuery) {
   ]);
 
   return {
-    items,
+    items: items.map(withUniquePhotos),
     pagination: {
       page: input.page,
       limit: input.limit,
@@ -63,12 +65,16 @@ export async function listAdminApartments(input: AdminApartmentQuery) {
 export async function getAdminApartment(id: string) {
   const apartment = await Apartment.findById(id).lean();
   if (!apartment) throw new AppError(404, "Apartment not found");
-  return apartment;
+  return withUniquePhotos(apartment);
 }
 
 export async function createApartment(input: CreateApartmentInput) {
   try {
-    return await Apartment.create(input);
+    const payload = {
+      ...input,
+      photos: uniquePhotoUrls(input.photos),
+    };
+    return await Apartment.create(payload);
   } catch (error: unknown) {
     if (isDuplicateKey(error)) throw new AppError(409, "An apartment with this slug already exists");
     throw error;
@@ -77,7 +83,11 @@ export async function createApartment(input: CreateApartmentInput) {
 
 export async function updateApartment(id: string, input: UpdateApartmentInput) {
   try {
-    const apartment = await Apartment.findByIdAndUpdate(id, input, {
+    const payload =
+      input.photos !== undefined
+        ? { ...input, photos: uniquePhotoUrls(input.photos) }
+        : input;
+    const apartment = await Apartment.findByIdAndUpdate(id, payload, {
       new: true,
       runValidators: true,
     });
