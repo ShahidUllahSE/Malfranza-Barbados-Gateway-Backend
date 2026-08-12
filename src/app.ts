@@ -7,9 +7,14 @@ import { notFound } from "./middleware/not-found.js";
 import { apiRouter } from "./routes/index.js";
 
 export const app = express();
+const frontendUrl = env.FRONTEND_URL?.replace(/\/$/, "") ?? "";
 const allowedOrigins = new Set(
   [
-    env.FRONTEND_URL?.replace(/\/$/, ""),
+    frontendUrl,
+    frontendUrl.replace("://www.", "://"),
+    frontendUrl.includes("://www.")
+      ? frontendUrl
+      : frontendUrl.replace("://", "://www."),
     ...(env.NODE_ENV === "development"
       ? [
           "http://localhost:8080",
