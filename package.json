@@ -13,6 +13,7 @@
     "seed:user": "tsx src/scripts/seed-user.ts",
     "seed:driver": "tsx src/scripts/seed-driver.ts",
     "seed:admin": "tsx src/scripts/seed-admin.ts",
+    "seed:taxi-fares": "tsx src/scripts/seed-taxi-fares.ts",
     "reminders:run": "tsx src/scripts/run-reminders.ts",
     "typecheck": "tsc --noEmit"
   },

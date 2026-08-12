@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { createAdminNotification } from "../notifications/admin-notification.service.js";
 import {
   sendAdminNewEnquiryEmail,
   sendEnquiryReceivedEmail,
@@ -47,6 +48,17 @@ export const postEnquiry: RequestHandler = async (request, response) => {
     message: enquiry.message,
   }).catch((error) => {
     console.error("[email] Failed to send admin enquiry alert", error);
+  });
+
+  const enquiryId = String(enquiry.id ?? enquiry._id);
+  await createAdminNotification({
+    type: "enquiry",
+    title: "New enquiry",
+    body: `${enquiry.name} · ${enquiry.interestedIn}`,
+    href: `/admin/enquiries`,
+    entityId: enquiryId,
+  }).catch((error) => {
+    console.error("[notify] Failed to create admin enquiry notification", error);
   });
 
   response.status(201).json({

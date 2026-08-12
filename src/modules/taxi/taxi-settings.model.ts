@@ -7,13 +7,16 @@ import { Schema, model, type InferSchemaType } from "mongoose";
 const taxiSettingsSchema = new Schema(
   {
     key: { type: String, required: true, unique: true, default: "default" },
+    fareFor1to4: { type: Number, min: 0, default: 25 },
+    fareFor5to7: { type: Number, min: 0, default: 35 },
+    fareFor8to10: { type: Number, min: 0, default: 45 },
     fareFor1Guest: { type: Number, required: true, min: 0, default: 25 },
-    fareFor2Guests: { type: Number, required: true, min: 0, default: 30 },
+    fareFor2Guests: { type: Number, required: true, min: 0, default: 25 },
     fareFor3Guests: { type: Number, required: true, min: 0, default: 35 },
     fareFor4PlusGuests: { type: Number, required: true, min: 0, default: 45 },
-    /** Added on top of the guest fare for every km of the route. Set 0 for flat guest-only pricing. */
-    perKmUsd: { type: Number, required: true, min: 0, default: 2.5 },
-    minimumFareUsd: { type: Number, required: true, min: 0, default: 20 },
+    /** Added on top of the guest fare for every km. 0 = flat guest-only pricing. */
+    perKmUsd: { type: Number, required: true, min: 0, default: 0 },
+    minimumFareUsd: { type: Number, required: true, min: 0, default: 25 },
   },
   {
     timestamps: true,

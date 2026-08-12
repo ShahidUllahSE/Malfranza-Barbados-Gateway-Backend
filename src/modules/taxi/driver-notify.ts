@@ -16,6 +16,8 @@ type AssignmentNotifyInput = {
     pickupTime: string;
     customerName: string;
     customerPhone: string;
+    passengers?: number;
+    vehicleLabel?: string;
   };
 };
 
@@ -41,6 +43,8 @@ export async function notifyDriverOfAssignment(input: AssignmentNotifyInput): Pr
     `Pickup:  ${input.booking.pickupLocation}`,
     `Dropoff: ${input.booking.dropoffLocation}`,
     `Guest:   ${input.booking.customerName} · ${input.booking.customerPhone}`,
+    input.booking.passengers != null ? `Party:   ${input.booking.passengers}` : "",
+    input.booking.vehicleLabel ? `Vehicle: ${input.booking.vehicleLabel}` : "",
     "Open driver portal: /driver",
     "════════════════════════════════════════",
     "",
@@ -59,6 +63,8 @@ export async function notifyDriverOfAssignment(input: AssignmentNotifyInput): Pr
     pickupTime: input.booking.pickupTime,
     customerName: input.booking.customerName,
     customerPhone: input.booking.customerPhone,
+    passengers: input.booking.passengers,
+    vehicleLabel: input.booking.vehicleLabel,
   }).catch((error) => {
     console.error("[email] Failed to email driver assignment", error);
   });

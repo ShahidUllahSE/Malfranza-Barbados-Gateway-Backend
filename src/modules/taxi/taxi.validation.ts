@@ -12,7 +12,7 @@ const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD forma
 const routeFields = {
   pickupLocation: z.string().trim().min(2).max(300),
   dropoffLocation: z.string().trim().min(2).max(300),
-  passengers: z.number().int().min(1).max(14),
+  passengers: z.coerce.number().int().min(1).max(14),
 };
 
 export const fareEstimateSchema = z.object(routeFields);
@@ -32,6 +32,7 @@ export const createTaxiBookingSchema = z.object({
 export const publicVehiclesQuerySchema = z.object({
   passengers: z.coerce.number().int().min(1).max(20).default(1),
   pickupDate: dateString.optional(),
+  pickupTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
   pickupLocation: z.string().trim().min(2).max(300).optional(),
   dropoffLocation: z.string().trim().min(2).max(300).optional(),
 });
@@ -70,10 +71,13 @@ export const assignTaxiDriverSchema = z.object({
 });
 
 export const updateTaxiSettingsSchema = z.object({
-  fareFor1Guest: z.number().nonnegative(),
-  fareFor2Guests: z.number().nonnegative(),
-  fareFor3Guests: z.number().nonnegative(),
-  fareFor4PlusGuests: z.number().nonnegative(),
+  fareFor1to4: z.number().nonnegative().optional(),
+  fareFor5to7: z.number().nonnegative().optional(),
+  fareFor8to10: z.number().nonnegative().optional(),
+  fareFor1Guest: z.number().nonnegative().optional(),
+  fareFor2Guests: z.number().nonnegative().optional(),
+  fareFor3Guests: z.number().nonnegative().optional(),
+  fareFor4PlusGuests: z.number().nonnegative().optional(),
   perKmUsd: z.number().nonnegative(),
   minimumFareUsd: z.number().nonnegative(),
 });

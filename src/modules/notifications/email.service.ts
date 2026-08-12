@@ -745,6 +745,7 @@ export async function sendDriverAssignmentEmail(input: {
   customerPhone: string;
   vehicleLabel?: string;
   notes?: string;
+  passengers?: number;
 }) {
   const portal = siteUrl("/driver");
   return mail(
@@ -760,6 +761,7 @@ export async function sendDriverAssignmentEmail(input: {
       `Guest: ${input.customerName}, ${input.customerPhone}`,
       `Service: ${input.serviceType}`,
       input.vehicleLabel ? `Vehicle: ${input.vehicleLabel}` : "",
+      input.passengers != null ? `Passengers: ${input.passengers}` : "",
       `Reference: ${input.bookingReference}`,
       `Portal: ${portal}`,
       `Office: ${PHONE}`,
@@ -931,35 +933,47 @@ export async function sendAdminNewTaxiBookingEmail(input: {
   pickupDate: string;
   pickupTime: string;
   estimatedFare: number;
+  passengers?: number;
   driverName?: string | null;
+  vehicleLabel?: string | null;
 }) {
   const to = env.ADMIN_NOTIFY_EMAIL;
+  const assigned = Boolean(input.driverName);
+  const intro = assigned
+    ? `A new ride is booked and assigned to ${input.driverName}.`
+    : "A new ride booking has come in and needs a driver assigned.";
   return mail(
     to,
     `New ride booking — ${input.pickupDate} ${input.pickupTime}`,
     [
       "Hi Gregory,",
       "",
-      "A new ride booking needs a driver assigned.",
+      intro,
       `Reference: ${input.bookingReference}`,
+      `Service: ${input.serviceType}`,
       `When: ${input.pickupDate} ${input.pickupTime}`,
       `Pickup: ${input.pickupLocation}`,
       `Drop-off: ${input.dropoffLocation}`,
-      `Guest: ${input.customerName} · ${input.customerEmail}`,
+      `Passengers: ${input.passengers ?? "—"}`,
+      `Vehicle: ${input.vehicleLabel || "To assign"}`,
+      `Guest: ${input.customerName} · ${input.customerEmail}${input.customerPhone ? ` · ${input.customerPhone}` : ""}`,
       `Total: ${money(input.estimatedFare)}`,
       `Admin: ${siteUrl("/admin/taxi")}`,
     ],
     `<p>Hi Gregory,</p>
-     <p>A new ride booking has come in and needs a driver assigned.</p>
+     <p>${escapeHtml(intro)}</p>
      <ul>
        <li><strong>Reference:</strong> ${escapeHtml(input.bookingReference)}</li>
+       <li><strong>Service:</strong> ${escapeHtml(input.serviceType)}</li>
        <li><strong>When:</strong> ${escapeHtml(input.pickupDate)} ${escapeHtml(input.pickupTime)}</li>
        <li><strong>Pickup:</strong> ${escapeHtml(input.pickupLocation)}</li>
        <li><strong>Drop-off:</strong> ${escapeHtml(input.dropoffLocation)}</li>
-       <li><strong>Guest:</strong> ${escapeHtml(input.customerName)} · ${escapeHtml(input.customerEmail)}</li>
+       <li><strong>Passengers:</strong> ${input.passengers ?? "—"}</li>
+       <li><strong>Vehicle:</strong> ${escapeHtml(input.vehicleLabel || "To assign")}</li>
+       <li><strong>Guest:</strong> ${escapeHtml(input.customerName)} · ${escapeHtml(input.customerEmail)}${input.customerPhone ? ` · ${escapeHtml(input.customerPhone)}` : ""}</li>
        <li><strong>Total:</strong> ${money(input.estimatedFare)}</li>
      </ul>
-     <p><a href="${siteUrl("/admin/taxi")}">Assign a driver in admin</a></p>`,
+     <p><a href="${siteUrl("/admin/taxi")}">Open taxi trips in admin</a></p>`,
   );
 }
 

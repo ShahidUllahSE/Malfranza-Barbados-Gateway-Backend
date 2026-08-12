@@ -1,8 +1,11 @@
-import { env } from "../../config/env.js";
 import { TaxiSettings } from "./taxi-settings.model.js";
 import type { UpdateTaxiSettingsInput } from "./taxi.validation.js";
 
 export type TaxiFareSettings = {
+  fareFor1to4: number;
+  fareFor5to7: number;
+  fareFor8to10: number;
+  /** Aliases kept so older admin/UI clients still work. */
   fareFor1Guest: number;
   fareFor2Guests: number;
   fareFor3Guests: number;
@@ -11,30 +14,62 @@ export type TaxiFareSettings = {
   minimumFareUsd: number;
 };
 
-const DEFAULTS: TaxiFareSettings = {
+/** Capacity tiers from the client spec. Exact sheet TBD — demo-safe USD amounts. */
+export const REGULATED_TAXI_FARES: TaxiFareSettings = {
+  fareFor1to4: 25,
+  fareFor5to7: 35,
+  fareFor8to10: 45,
   fareFor1Guest: 25,
-  fareFor2Guests: 30,
+  fareFor2Guests: 25,
   fareFor3Guests: 35,
   fareFor4PlusGuests: 45,
-  perKmUsd: env.TAXI_PER_KM_USD,
-  minimumFareUsd: env.TAXI_MINIMUM_FARE_USD,
+  perKmUsd: 0,
+  minimumFareUsd: 25,
 };
 
+const DEFAULTS: TaxiFareSettings = REGULATED_TAXI_FARES;
+
 function toSettings(doc: {
-  fareFor1Guest: number;
-  fareFor2Guests: number;
-  fareFor3Guests: number;
-  fareFor4PlusGuests: number;
+  fareFor1to4?: number;
+  fareFor5to7?: number;
+  fareFor8to10?: number;
+  fareFor1Guest?: number;
+  fareFor2Guests?: number;
+  fareFor3Guests?: number;
+  fareFor4PlusGuests?: number;
   perKmUsd: number;
   minimumFareUsd: number;
 }): TaxiFareSettings {
+  const fareFor1to4 = Number(doc.fareFor1to4 ?? doc.fareFor1Guest ?? 25);
+  const fareFor5to7 = Number(doc.fareFor5to7 ?? doc.fareFor3Guests ?? 35);
+  const fareFor8to10 = Number(doc.fareFor8to10 ?? doc.fareFor4PlusGuests ?? 45);
   return {
-    fareFor1Guest: doc.fareFor1Guest,
-    fareFor2Guests: doc.fareFor2Guests,
-    fareFor3Guests: doc.fareFor3Guests,
-    fareFor4PlusGuests: doc.fareFor4PlusGuests,
-    perKmUsd: doc.perKmUsd,
-    minimumFareUsd: doc.minimumFareUsd,
+    fareFor1to4,
+    fareFor5to7,
+    fareFor8to10,
+    fareFor1Guest: fareFor1to4,
+    fareFor2Guests: fareFor1to4,
+    fareFor3Guests: fareFor5to7,
+    fareFor4PlusGuests: fareFor8to10,
+    perKmUsd: Number(doc.perKmUsd ?? 0),
+    minimumFareUsd: Number(doc.minimumFareUsd ?? 25),
+  };
+}
+
+function persistableFromInput(input: UpdateTaxiSettingsInput) {
+  const fareFor1to4 = input.fareFor1to4 ?? input.fareFor1Guest ?? 25;
+  const fareFor5to7 = input.fareFor5to7 ?? input.fareFor3Guests ?? 35;
+  const fareFor8to10 = input.fareFor8to10 ?? input.fareFor4PlusGuests ?? 45;
+  return {
+    fareFor1to4,
+    fareFor5to7,
+    fareFor8to10,
+    fareFor1Guest: fareFor1to4,
+    fareFor2Guests: fareFor1to4,
+    fareFor3Guests: fareFor5to7,
+    fareFor4PlusGuests: fareFor8to10,
+    perKmUsd: input.perKmUsd,
+    minimumFareUsd: input.minimumFareUsd,
   };
 }
 
@@ -50,17 +85,16 @@ export async function getTaxiSettings(): Promise<TaxiFareSettings> {
 export async function updateTaxiSettings(input: UpdateTaxiSettingsInput): Promise<TaxiFareSettings> {
   const updated = await TaxiSettings.findOneAndUpdate(
     { key: "default" },
-    { $set: input, $setOnInsert: { key: "default" } },
+    { $set: { ...persistableFromInput(input), key: "default" } },
     { new: true, upsert: true, runValidators: true },
   );
   return toSettings(updated!);
 }
 
 export function guestFareFromSettings(settings: TaxiFareSettings, passengers: number): number {
-  if (passengers <= 1) return settings.fareFor1Guest;
-  if (passengers === 2) return settings.fareFor2Guests;
-  if (passengers === 3) return settings.fareFor3Guests;
-  return settings.fareFor4PlusGuests;
+  if (passengers <= 4) return settings.fareFor1to4;
+  if (passengers <= 7) return settings.fareFor5to7;
+  return settings.fareFor8to10;
 }
 
 /**

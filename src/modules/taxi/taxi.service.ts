@@ -3,9 +3,11 @@ import { Types, type QueryFilter } from "mongoose";
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { Driver } from "../drivers/driver.model.js";
+import { createAdminNotification } from "../notifications/admin-notification.service.js";
 import {
   sendAdminNewTaxiBookingEmail,
   sendDriverTripCancelledEmail,
+  sendDriverTripUpdatedEmail,
   sendPaymentReceiptEmail,
   sendTaxiConfirmationEmail,
   sendTaxiStatusEmail,
@@ -32,26 +34,24 @@ function generateReference(): string {
   return `MFZ-TAXI-${new Date().getUTCFullYear()}-${randomBytes(4).toString("hex").toUpperCase()}`;
 }
 
-function ensureBarbados(address: string): string {
-  return /barbados/i.test(address) ? address : `${address}, Barbados`;
+function demoFareEstimate(
+  settings: Awaited<ReturnType<typeof getTaxiSettings>>,
+  passengers: number,
+) {
+  const distanceKm = 12;
+  return {
+    distanceKm,
+    durationMinutes: 25,
+    estimatedFare: calculateFareFromSettings(settings, distanceKm, passengers),
+    currency: "USD" as const,
+    estimated: true as const,
+    guestFare: guestFareFromSettings(settings, passengers),
+    perKmUsd: settings.perKmUsd,
+  };
 }
 
-export async function estimateFare(input: FareEstimateInput) {
-  const settings = await getTaxiSettings();
-
-  if (!env.GOOGLE_MAPS_API_KEY) {
-    const distanceKm = 12;
-    return {
-      distanceKm,
-      durationMinutes: 25,
-      estimatedFare: calculateFareFromSettings(settings, distanceKm, input.passengers),
-      currency: "USD" as const,
-      estimated: true as const,
-      guestFare: guestFareFromSettings(settings, input.passengers),
-      perKmUsd: settings.perKmUsd,
-    };
-  }
-
+async function requestGoogleRoute(origin: string, destination: string) {
+  if (!env.GOOGLE_MAPS_API_KEY) return null;
   const response = await fetch(
     "https://routes.googleapis.com/directions/v2:computeRoutes",
     {
@@ -62,29 +62,44 @@ export async function estimateFare(input: FareEstimateInput) {
         "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
       },
       body: JSON.stringify({
-        origin: { address: ensureBarbados(input.pickupLocation) },
-        destination: { address: ensureBarbados(input.dropoffLocation) },
+        origin: { address: origin },
+        destination: { address: destination },
         travelMode: "DRIVE",
         routingPreference: "TRAFFIC_UNAWARE",
       }),
       signal: AbortSignal.timeout(10_000),
     },
   ).catch((error: unknown) => {
-    console.error("Google Routes request failed", error);
-    throw new AppError(502, "The route service is temporarily unavailable");
+    console.warn("[taxi] Google Routes request failed — using demo fare", error);
+    return null;
   });
-
-  if (!response.ok) {
-    console.error("Google Routes error", response.status, await response.text());
-    throw new AppError(502, "Unable to calculate a route for those locations");
+  if (!response?.ok) {
+    if (response) {
+      console.warn("[taxi] Google Routes error", response.status, await response.text().catch(() => ""));
+    }
+    return null;
   }
-
   const payload = (await response.json()) as {
     routes?: Array<{ distanceMeters?: number; duration?: string }>;
   };
-  const route = payload.routes?.[0];
+  return payload.routes?.[0] ?? null;
+}
+
+export async function estimateFare(input: FareEstimateInput) {
+  const settings = await getTaxiSettings();
+  const pickup = input.pickupLocation.trim();
+  const dropoff = input.dropoffLocation.trim();
+
+  // Demo: accept any typed location. Try the address as entered, then with Barbados.
+  const route =
+    (await requestGoogleRoute(pickup, dropoff)) ??
+    (await requestGoogleRoute(
+      /barbados/i.test(pickup) ? pickup : `${pickup}, Barbados`,
+      /barbados/i.test(dropoff) ? dropoff : `${dropoff}, Barbados`,
+    ));
+
   if (!route?.distanceMeters) {
-    throw new AppError(422, "No driving route was found between those locations");
+    return demoFareEstimate(settings, input.passengers);
   }
 
   const distanceKm = Math.round((route.distanceMeters / 1000) * 10) / 10;
@@ -95,9 +110,10 @@ export async function estimateFare(input: FareEstimateInput) {
     durationMinutes:
       durationSeconds && Number.isFinite(durationSeconds)
         ? Math.round(durationSeconds / 60)
-        : undefined,
+        : 25,
     estimatedFare: calculateFareFromSettings(settings, distanceKm, input.passengers),
     currency: "USD" as const,
+    estimated: true as const,
     guestFare: guestFareFromSettings(settings, input.passengers),
     perKmUsd: settings.perKmUsd,
   };
@@ -127,34 +143,64 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
     estimatedFare = Math.max(settings.minimumFareUsd, estimatedFare);
   }
 
-  const busyIds = input.pickupDate
-    ? await busyDriverIdsForDate(toUtcDate(input.pickupDate))
-    : [];
+  const busyIds =
+    input.pickupDate && input.pickupTime
+      ? await busyDriverIdsForSlot(toUtcDate(input.pickupDate), input.pickupTime)
+      : [];
   const busySet = new Set(busyIds.map((id) => String(id)));
 
   const drivers = await Driver.find({ isActive: true })
     .sort({ passengerCapacity: 1, name: 1 })
     .lean();
 
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const upcoming = await TaxiBooking.find({
+    driverId: { $ne: null },
+    status: { $in: ACTIVE_TAXI_STATUSES },
+    pickupDate: { $gte: today },
+  })
+    .select("driverId pickupDate pickupTime")
+    .sort({ pickupDate: 1, pickupTime: 1 })
+    .lean();
+
+  const slotsByDriver = new Map<string, Array<{ date: string; time: string }>>();
+  for (const trip of upcoming) {
+    const id = String(trip.driverId);
+    const list = slotsByDriver.get(id) ?? [];
+    list.push({
+      date: new Date(trip.pickupDate).toISOString().slice(0, 10),
+      time: trip.pickupTime,
+    });
+    slotsByDriver.set(id, list);
+  }
+
+  const guestFare = guestFareFromSettings(settings, passengers);
+
   return {
     fare: estimatedFare,
+    guestFare,
+    passengers,
     distanceKm: distanceKm ?? null,
     durationMinutes: durationMinutes ?? null,
     currency: "USD" as const,
-    vehicles: drivers.map((d) => {
-      const capacity = Number(d.passengerCapacity ?? 7);
-      const busy = busySet.has(d._id.toString());
-      const fits = capacity >= passengers;
-      return {
-        id: d._id.toString(),
-        name: d.name,
-        vehicleLabel: d.vehicleLabel || `${capacity}-seater van`,
-        passengerCapacity: capacity,
-        isAvailable: Boolean(d.isAvailable) && !busy,
-        fitsParty: fits,
-        fare: estimatedFare,
-      };
-    }),
+    vehicles: drivers
+      .map((d) => {
+        const capacity = Number(d.passengerCapacity ?? 4);
+        const busy = busySet.has(d._id.toString());
+        const fits = capacity >= passengers;
+        return {
+          id: d._id.toString(),
+          name: d.name,
+          vehicleLabel: d.vehicleLabel || `${capacity}-seater`,
+          passengerCapacity: capacity,
+          isAvailable: Boolean(d.isAvailable) && !busy,
+          fitsParty: fits,
+          fare: estimatedFare,
+          bookedSlots: (slotsByDriver.get(d._id.toString()) ?? []).slice(0, 8),
+        };
+      })
+      .filter((v) => v.fitsParty),
   };
 }
 
@@ -168,6 +214,7 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
     ...bookingFields,
     userId,
     pickupDate,
+    pickupTime: normalizePickupTime(input.pickupTime),
     customerEmail: input.customerEmail.toLowerCase(),
     bookingReference: generateReference(),
     distanceKm: estimate.distanceKm,
@@ -175,16 +222,18 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
     estimatedFare: estimate.estimatedFare,
   });
 
-  const freeDriver = requestedDriverId
-    ? await findFreeDriver(pickupDate, {
-        preferredId: requestedDriverId,
-        minCapacity: input.passengers,
-      })
-    : await findFreeDriver(pickupDate, { minCapacity: input.passengers });
+  const freeDriver = await findFreeDriver(pickupDate, {
+    preferredId: requestedDriverId,
+    minCapacity: input.passengers,
+    pickupTime: input.pickupTime,
+  });
+  const vehicleUpgraded = Boolean(
+    requestedDriverId && freeDriver && String(freeDriver._id) !== requestedDriverId,
+  );
 
-  if (requestedDriverId && !freeDriver) {
+  if (!freeDriver && requestedDriverId) {
     await TaxiBooking.deleteOne({ _id: booking._id });
-    throw new AppError(409, "That vehicle is not available for this party size or date. Please pick another.");
+    throw new AppError(409, "No vehicle is free for this party size at that date and time.");
   }
 
   if (freeDriver) {
@@ -207,6 +256,8 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
         pickupTime: booking.pickupTime,
         customerName: booking.customerName,
         customerPhone: booking.customerPhone,
+        passengers: Number(booking.passengers),
+        vehicleLabel: freeDriver.vehicleLabel ?? undefined,
       },
     });
   }
@@ -275,57 +326,96 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
     pickupDate: pickupDateIso,
     pickupTime: populated.pickupTime,
     estimatedFare: Number(populated.estimatedFare),
+    passengers: Number(populated.passengers),
     driverName: driverDoc?.name ?? null,
+    vehicleLabel: driverDoc?.vehicleLabel ?? null,
   }).catch((error) => {
     console.error("[email] Failed to send admin taxi alert", error);
   });
 
-  return populated;
+  const taxiId = String(populated._id);
+  await createAdminNotification({
+    type: "taxi_booking",
+    title: "New taxi booking",
+    body: `${populated.customerName} · ${pickupDateIso} ${populated.pickupTime} · ${populated.pickupLocation} → ${populated.dropoffLocation}`,
+    href: `/admin/taxi/${taxiId}`,
+    entityId: taxiId,
+  }).catch((error) => {
+    console.error("[notify] Failed to create admin taxi notification", error);
+  });
+
+  return { ...populated, vehicleUpgraded };
+}
+
+const ACTIVE_TAXI_STATUSES = ["pending", "confirmed", "assigned", "en_route"] as const;
+
+function normalizePickupTime(value: string) {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return value.trim();
+  return `${String(Number(match[1])).padStart(2, "0")}:${match[2]}`;
 }
 
 /**
- * A driver is free if they are active + available and have no overlapping
- * assigned/en_route trip on the same pickup day.
+ * A driver is busy only for the same pickup date and time.
+ * Other times that day stay bookable.
  */
-async function busyDriverIdsForDate(pickupDate: Date) {
+async function busyDriverIdsForSlot(pickupDate: Date, pickupTime?: string, exceptBookingId?: string) {
   const dayStart = new Date(pickupDate);
   dayStart.setUTCHours(0, 0, 0, 0);
   const dayEnd = new Date(pickupDate);
   dayEnd.setUTCHours(23, 59, 59, 999);
+  const time = pickupTime ? normalizePickupTime(pickupTime) : "";
 
-  return TaxiBooking.distinct("driverId", {
+  const trips = await TaxiBooking.find({
     driverId: { $ne: null },
-    status: { $in: ["assigned", "en_route"] },
+    status: { $in: [...ACTIVE_TAXI_STATUSES] },
     pickupDate: { $gte: dayStart, $lte: dayEnd },
-  });
+    ...(exceptBookingId ? { _id: { $ne: exceptBookingId } } : {}),
+  })
+    .select("driverId pickupTime")
+    .lean();
+
+  const busy = new Set<string>();
+  for (const trip of trips) {
+    if (!trip.driverId) continue;
+    if (time && normalizePickupTime(trip.pickupTime) !== time) continue;
+    busy.add(String(trip.driverId));
+  }
+  return [...busy];
+}
+
+function driverCapacity(driver: { passengerCapacity?: number | null }) {
+  const n = Number(driver.passengerCapacity);
+  return Number.isFinite(n) && n > 0 ? n : 4;
 }
 
 async function findFreeDriver(
   pickupDate: Date,
-  options?: { preferredId?: string; minCapacity?: number },
+  options?: { preferredId?: string; minCapacity?: number; pickupTime?: string },
 ) {
-  const busyIds = await busyDriverIdsForDate(pickupDate);
-  const capacityFilter =
-    options?.minCapacity != null ? { passengerCapacity: { $gte: options.minCapacity } } : {};
+  const busyIds = await busyDriverIdsForSlot(pickupDate, options?.pickupTime);
+  const busySet = new Set(busyIds.map((id) => String(id)));
+  const min = options?.minCapacity ?? 1;
 
-  if (options?.preferredId) {
-    if (busyIds.some((id) => String(id) === options.preferredId)) return null;
-    return Driver.findOne({
+  if (options?.preferredId && !busySet.has(options.preferredId)) {
+    const driver = await Driver.findOne({
       _id: options.preferredId,
-      isActive: true,
-      isAvailable: true,
-      ...capacityFilter,
+      isActive: { $ne: false },
     }).lean();
+    if (driver && driver.isAvailable !== false && driverCapacity(driver) >= min) {
+      return driver;
+    }
   }
 
-  return Driver.findOne({
-    isActive: true,
-    isAvailable: true,
-    ...capacityFilter,
+  const candidates = await Driver.find({
+    isActive: { $ne: false },
+    isAvailable: { $ne: false },
     ...(busyIds.length ? { _id: { $nin: busyIds } } : {}),
   })
     .sort({ passengerCapacity: 1, updatedAt: 1, createdAt: 1 })
     .lean();
+
+  return candidates.find((driver) => driverCapacity(driver) >= min) ?? null;
 }
 
 /** After a driver frees up, auto-assign the oldest waiting trip. */
@@ -346,14 +436,19 @@ export async function autoAssignNextWaitingTrip(preferredDriverId?: string) {
       isAvailable: true,
     }).lean();
     if (preferred) {
-      const stillFree = await findFreeDriver(waiting.pickupDate);
+      const stillFree = await findFreeDriver(waiting.pickupDate, {
+        pickupTime: waiting.pickupTime,
+      });
       if (stillFree && stillFree._id.toString() === preferredDriverId) {
         return assignTaxiDriver(waiting._id.toString(), preferredDriverId);
       }
     }
   }
 
-  const free = await findFreeDriver(waiting.pickupDate, { minCapacity: waiting.passengers });
+  const free = await findFreeDriver(waiting.pickupDate, {
+    minCapacity: waiting.passengers,
+    pickupTime: waiting.pickupTime,
+  });
   if (!free) return null;
   return assignTaxiDriver(waiting._id.toString(), free._id.toString());
 }
@@ -505,6 +600,24 @@ export async function updateTaxiBookingStatus(id: string, nextStatus: TaxiStatus
       }).catch((error) => {
         console.error("[email] Failed to send driver trip cancelled", error);
       });
+    } else if (
+      driverDoc?.email &&
+      driverDoc.name &&
+      (nextStatus === "en_route" || nextStatus === "confirmed")
+    ) {
+      await sendDriverTripUpdatedEmail({
+        to: String(driverDoc.email),
+        driverName: String(driverDoc.name),
+        summary: `Status is now ${nextStatus.replaceAll("_", " ")}`,
+        pickupDate: String(booking.pickupDate).slice(0, 10),
+        pickupTime: booking.pickupTime,
+        pickupLocation: booking.pickupLocation,
+        dropoffLocation: booking.dropoffLocation,
+        customerName: booking.customerName,
+        customerPhone: booking.customerPhone,
+      }).catch((error) => {
+        console.error("[email] Failed to send driver trip updated", error);
+      });
     }
   }
 
@@ -537,10 +650,38 @@ export async function assignTaxiDriver(bookingId: string, driverId: string) {
     throw new AppError(409, "This driver is marked unavailable");
   }
 
+  const busyIds = await busyDriverIdsForSlot(
+    booking.pickupDate,
+    booking.pickupTime,
+    booking.id,
+  );
+  if (busyIds.some((id) => String(id) === driverId)) {
+    throw new AppError(409, "That driver already has a trip at this date and time");
+  }
+
+  const previousDriverId = booking.driverId ? String(booking.driverId) : null;
+  const previousDriver =
+    previousDriverId && previousDriverId !== driverId
+      ? await Driver.findById(previousDriverId).lean()
+      : null;
+
   booking.driverId = new Types.ObjectId(driverId);
   booking.assignedAt = new Date();
   booking.status = "assigned";
   await booking.save();
+
+  if (previousDriver?.email && previousDriver.name) {
+    await sendDriverTripCancelledEmail({
+      to: previousDriver.email,
+      driverName: previousDriver.name,
+      pickupDate: String(booking.pickupDate).slice(0, 10),
+      pickupTime: booking.pickupTime,
+      pickupLocation: booking.pickupLocation,
+      dropoffLocation: booking.dropoffLocation,
+    }).catch((error) => {
+      console.error("[email] Failed to notify previous driver of reassignment", error);
+    });
+  }
 
   await notifyDriverOfAssignment({
     driver: {
@@ -557,6 +698,8 @@ export async function assignTaxiDriver(bookingId: string, driverId: string) {
       pickupTime: booking.pickupTime,
       customerName: booking.customerName,
       customerPhone: booking.customerPhone,
+      passengers: Number(booking.passengers),
+      vehicleLabel: driver.vehicleLabel ?? undefined,
     },
   });
 

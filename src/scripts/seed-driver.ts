@@ -6,20 +6,20 @@ import { Driver } from "../modules/drivers/driver.model.js";
 
 const FLEET = [
   {
-    name: "Malfranza Van 7",
+    name: "Malfranza Car",
     email: "driver@gmail.com",
     password: "driver@321",
     phone: "+1 246 555 0200",
-    vehicleLabel: "7-seater van",
-    passengerCapacity: 7,
+    vehicleLabel: "4-seater car",
+    passengerCapacity: 4,
   },
   {
-    name: "Malfranza Van 10",
+    name: "Malfranza Van",
     email: "driver10@malfranza.com",
     password: "driver@321",
     phone: "+1 246 555 0210",
-    vehicleLabel: "10-seater van",
-    passengerCapacity: 10,
+    vehicleLabel: "12-seater van",
+    passengerCapacity: 12,
   },
 ] as const;
 

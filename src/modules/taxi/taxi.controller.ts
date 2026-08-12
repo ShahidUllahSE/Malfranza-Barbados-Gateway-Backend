@@ -125,6 +125,7 @@ export const postTaxiBooking: RequestHandler = async (request, response) => {
                 (booking.driverId as { passengerCapacity?: number }).passengerCapacity ?? null,
             }
           : null,
+      vehicleUpgraded: Boolean((booking as { vehicleUpgraded?: boolean }).vehicleUpgraded),
     },
   });
 };

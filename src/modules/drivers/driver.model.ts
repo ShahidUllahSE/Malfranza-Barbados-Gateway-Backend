@@ -14,7 +14,7 @@ const driverSchema = new Schema(
     phone: { type: String, required: true, trim: true, maxlength: 40 },
     passwordHash: { type: String, required: true, select: false },
     vehicleLabel: { type: String, trim: true, maxlength: 120 },
-    passengerCapacity: { type: Number, required: true, min: 1, max: 20, default: 7 },
+    passengerCapacity: { type: Number, required: true, min: 1, max: 20, default: 4 },
     isAvailable: { type: Boolean, default: true, required: true, index: true },
     isActive: { type: Boolean, default: true, required: true, index: true },
     lastLoginAt: { type: Date },

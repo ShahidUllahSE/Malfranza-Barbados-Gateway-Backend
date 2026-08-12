@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express";
 import { TravelAgency } from "../agencies/agency.model.js";
+import { createAdminNotification } from "../notifications/admin-notification.service.js";
 import {
   sendAdminNewStayBookingEmail,
   sendAdminPaymentReceivedEmail,
@@ -198,6 +199,17 @@ export const postBooking: RequestHandler = async (request, response) => {
     agencyName: booking.agencyName ?? null,
   }).catch((error) => {
     console.error("[email] Failed to send admin stay alert", error);
+  });
+
+  const stayId = String(booking.id ?? booking._id);
+  await createAdminNotification({
+    type: "stay_booking",
+    title: "New stay booking",
+    body: `${guest.guestName} · ${booking.apartmentName} · ${checkIn} → ${checkOut}`,
+    href: `/admin/bookings`,
+    entityId: stayId,
+  }).catch((error) => {
+    console.error("[notify] Failed to create admin stay notification", error);
   });
 
   // Agency: new booking under their code
