@@ -109,7 +109,7 @@ export async function createPayPalOrder(input: {
       application_context: {
         shipping_preference: "NO_SHIPPING",
         user_action: "PAY_NOW",
-        brand_name: "Malfranza Apartments & Taxi",
+        brand_name: "Malfranza Apartments",
         landing_page: "LOGIN",
       },
     }),
