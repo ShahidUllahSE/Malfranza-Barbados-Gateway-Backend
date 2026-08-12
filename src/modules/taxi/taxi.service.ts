@@ -595,9 +595,6 @@ export async function assignTaxiDriver(bookingId: string, driverId: string) {
 
   const driver = await Driver.findOne({ _id: driverId, isActive: true });
   if (!driver) throw new AppError(404, "Driver not found");
-  if (!driver.isAvailable) {
-    throw new AppError(409, "This driver is marked unavailable");
-  }
 
   const busySlot = await busyDriverIdsForSlot(
     booking.pickupDate,
