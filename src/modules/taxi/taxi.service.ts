@@ -273,8 +273,18 @@ function normalizePickupTime(value: string) {
 /** Each taxi booking occupies the vehicle for 1 hour from pickup. */
 const TAXI_SLOT_MINUTES = 60;
 
+function parseHoursMinutes(time: string): { hours: number; minutes: number } {
+  const [hoursRaw, minutesRaw] = normalizePickupTime(time).split(":");
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+  return {
+    hours: Number.isFinite(hours) ? hours : 0,
+    minutes: Number.isFinite(minutes) ? minutes : 0,
+  };
+}
+
 function timeToMinutes(time: string): number {
-  const [hours, minutes] = normalizePickupTime(time).split(":").map(Number);
+  const { hours, minutes } = parseHoursMinutes(time);
   return hours * 60 + minutes;
 }
 
@@ -290,7 +300,7 @@ function addMinutesToTime(time: string, add: number): string {
 }
 
 function slotStartMs(pickupDate: Date, pickupTime: string): number {
-  const [hours, minutes] = normalizePickupTime(pickupTime).split(":").map(Number);
+  const { hours, minutes } = parseHoursMinutes(pickupTime);
   const start = new Date(pickupDate);
   start.setUTCHours(hours, minutes, 0, 0);
   return start.getTime();
