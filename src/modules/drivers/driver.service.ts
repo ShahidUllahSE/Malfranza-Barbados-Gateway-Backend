@@ -76,6 +76,7 @@ export async function createDriver(input: CreateDriverInput) {
       email: input.email,
       phone: input.phone,
       vehicleLabel: input.vehicleLabel,
+      passengerCapacity: input.passengerCapacity ?? 7,
       isAvailable: input.isAvailable ?? true,
       passwordHash,
     });
@@ -116,6 +117,7 @@ export async function listDrivers(input: AdminDriverListQuery) {
       email: d.email,
       phone: d.phone,
       vehicleLabel: d.vehicleLabel ?? null,
+      passengerCapacity: Number(d.passengerCapacity ?? 7),
       isAvailable: d.isAvailable,
       isActive: d.isActive,
       lastLoginAt: d.lastLoginAt ?? null,
@@ -137,6 +139,7 @@ export async function updateDriver(id: string, input: UpdateDriverInput) {
   if (input.name !== undefined) driver.name = input.name;
   if (input.phone !== undefined) driver.phone = input.phone;
   if (input.vehicleLabel !== undefined) driver.vehicleLabel = input.vehicleLabel ?? undefined;
+  if (input.passengerCapacity !== undefined) driver.passengerCapacity = input.passengerCapacity;
   if (input.isAvailable !== undefined) driver.isAvailable = input.isAvailable;
   if (input.isActive !== undefined) driver.isActive = input.isActive;
   if (input.password) driver.passwordHash = await bcrypt.hash(input.password, 12);
@@ -417,6 +420,7 @@ export async function getAdminDriverDetail(id: string, query: AdminDriverDetailQ
       email: driver.email,
       phone: driver.phone,
       vehicleLabel: driver.vehicleLabel ?? null,
+      passengerCapacity: Number(driver.passengerCapacity ?? 7),
       isAvailable: driver.isAvailable,
       isActive: driver.isActive,
       lastLoginAt: driver.lastLoginAt ?? null,
@@ -443,6 +447,7 @@ export async function listAvailableDrivers() {
     email: d.email,
     phone: d.phone,
     vehicleLabel: d.vehicleLabel ?? null,
+    passengerCapacity: Number(d.passengerCapacity ?? 7),
     isAvailable: d.isAvailable,
   }));
 }

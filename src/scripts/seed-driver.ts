@@ -4,43 +4,59 @@ import mongoose from "mongoose";
 import { env } from "../config/env.js";
 import { Driver } from "../modules/drivers/driver.model.js";
 
-const DEFAULT_DRIVER = {
-  name: "Demo Driver",
-  email: "driver@gmail.com",
-  password: "driver@321",
-  phone: "+1 246 555 0200",
-  vehicleLabel: "White van · B 2468",
-};
+const FLEET = [
+  {
+    name: "Malfranza Van 7",
+    email: "driver@gmail.com",
+    password: "driver@321",
+    phone: "+1 246 555 0200",
+    vehicleLabel: "7-seater van",
+    passengerCapacity: 7,
+  },
+  {
+    name: "Malfranza Van 10",
+    email: "driver10@malfranza.com",
+    password: "driver@321",
+    phone: "+1 246 555 0210",
+    vehicleLabel: "10-seater van",
+    passengerCapacity: 10,
+  },
+] as const;
 
-async function main() {
-  await mongoose.connect(env.MONGODB_URI);
-
-  const existing = await Driver.findOne({ email: DEFAULT_DRIVER.email });
+async function upsertDriver(entry: (typeof FLEET)[number]) {
+  const passwordHash = await bcrypt.hash(entry.password, 12);
+  const existing = await Driver.findOne({ email: entry.email });
   if (existing) {
-    existing.name = DEFAULT_DRIVER.name;
-    existing.phone = DEFAULT_DRIVER.phone;
-    existing.vehicleLabel = DEFAULT_DRIVER.vehicleLabel;
+    existing.name = entry.name;
+    existing.phone = entry.phone;
+    existing.vehicleLabel = entry.vehicleLabel;
+    existing.passengerCapacity = entry.passengerCapacity;
     existing.isActive = true;
     existing.isAvailable = true;
-    existing.passwordHash = await bcrypt.hash(DEFAULT_DRIVER.password, 12);
+    existing.passwordHash = passwordHash;
     await existing.save();
-    console.log(`Updated driver: ${DEFAULT_DRIVER.email} / ${DEFAULT_DRIVER.password}`);
-    await mongoose.disconnect();
+    console.log(`Updated ${entry.vehicleLabel}: ${entry.email} / ${entry.password}`);
     return;
   }
 
-  const passwordHash = await bcrypt.hash(DEFAULT_DRIVER.password, 12);
   await Driver.create({
-    name: DEFAULT_DRIVER.name,
-    email: DEFAULT_DRIVER.email,
-    phone: DEFAULT_DRIVER.phone,
-    vehicleLabel: DEFAULT_DRIVER.vehicleLabel,
+    name: entry.name,
+    email: entry.email,
+    phone: entry.phone,
+    vehicleLabel: entry.vehicleLabel,
+    passengerCapacity: entry.passengerCapacity,
     passwordHash,
     isActive: true,
     isAvailable: true,
   });
+  console.log(`Created ${entry.vehicleLabel}: ${entry.email} / ${entry.password}`);
+}
 
-  console.log(`Created driver: ${DEFAULT_DRIVER.email} / ${DEFAULT_DRIVER.password}`);
+async function main() {
+  await mongoose.connect(env.MONGODB_URI);
+  for (const vehicle of FLEET) {
+    await upsertDriver(vehicle);
+  }
   await mongoose.disconnect();
 }
 

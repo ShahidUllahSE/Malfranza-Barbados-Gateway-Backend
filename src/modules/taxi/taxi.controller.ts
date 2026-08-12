@@ -8,11 +8,13 @@ import {
   createTaxiBooking,
   estimateFare,
   getPublicTaxiBooking,
+  listPublicVehicles,
 } from "./taxi.service.js";
 import { getTaxiSettings } from "./taxi-settings.service.js";
 import {
   createTaxiBookingSchema,
   fareEstimateSchema,
+  publicVehiclesQuerySchema,
   taxiPublicLookupSchema,
 } from "./taxi.validation.js";
 
@@ -52,6 +54,12 @@ async function resolveTaxiCustomer(
 export const getPublicTaxiSettings: RequestHandler = async (_request, response) => {
   const settings = await getTaxiSettings();
   response.status(200).json({ success: true, data: settings });
+};
+
+export const getPublicVehicles: RequestHandler = async (request, response) => {
+  const input = publicVehiclesQuerySchema.parse(request.query);
+  const data = await listPublicVehicles(input);
+  response.status(200).json({ success: true, data });
 };
 
 export const postFareEstimate: RequestHandler = async (request, response) => {
@@ -113,6 +121,8 @@ export const postTaxiBooking: RequestHandler = async (request, response) => {
               name: (booking.driverId as { name?: string }).name ?? "Driver",
               phone: (booking.driverId as { phone?: string }).phone ?? "",
               vehicleLabel: (booking.driverId as { vehicleLabel?: string | null }).vehicleLabel ?? null,
+              passengerCapacity:
+                (booking.driverId as { passengerCapacity?: number }).passengerCapacity ?? null,
             }
           : null,
     },

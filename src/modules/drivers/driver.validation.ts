@@ -10,6 +10,7 @@ export const createDriverSchema = z.object({
   name: z.string().trim().min(2).max(120),
   phone: z.string().trim().min(6).max(40),
   vehicleLabel: z.string().trim().max(120).optional(),
+  passengerCapacity: z.number().int().min(1).max(20).optional(),
   isAvailable: z.boolean().optional(),
   ...credentials,
 });
@@ -19,6 +20,7 @@ export const updateDriverSchema = z
     name: z.string().trim().min(2).max(120).optional(),
     phone: z.string().trim().min(6).max(40).optional(),
     vehicleLabel: z.string().trim().max(120).nullable().optional(),
+    passengerCapacity: z.number().int().min(1).max(20).optional(),
     password: z.string().min(8).max(128).optional(),
     isAvailable: z.boolean().optional(),
     isActive: z.boolean().optional(),

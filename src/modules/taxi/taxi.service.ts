@@ -21,6 +21,7 @@ import type {
   AdminTaxiListQuery,
   CreateTaxiBookingInput,
   FareEstimateInput,
+  PublicVehiclesQuery,
 } from "./taxi.validation.js";
 
 function toUtcDate(value: string): Date {
@@ -102,12 +103,69 @@ export async function estimateFare(input: FareEstimateInput) {
   };
 }
 
+export async function listPublicVehicles(input: PublicVehiclesQuery) {
+  const settings = await getTaxiSettings();
+  const passengers = input.passengers;
+  let estimatedFare = guestFareFromSettings(settings, passengers);
+  let distanceKm: number | undefined;
+  let durationMinutes: number | undefined;
+
+  if (input.pickupLocation && input.dropoffLocation) {
+    try {
+      const estimate = await estimateFare({
+        pickupLocation: input.pickupLocation,
+        dropoffLocation: input.dropoffLocation,
+        passengers,
+      });
+      estimatedFare = estimate.estimatedFare;
+      distanceKm = estimate.distanceKm;
+      durationMinutes = estimate.durationMinutes;
+    } catch {
+      estimatedFare = calculateFareFromSettings(settings, 12, passengers);
+    }
+  } else {
+    estimatedFare = Math.max(settings.minimumFareUsd, estimatedFare);
+  }
+
+  const busyIds = input.pickupDate
+    ? await busyDriverIdsForDate(toUtcDate(input.pickupDate))
+    : [];
+  const busySet = new Set(busyIds.map((id) => String(id)));
+
+  const drivers = await Driver.find({ isActive: true })
+    .sort({ passengerCapacity: 1, name: 1 })
+    .lean();
+
+  return {
+    fare: estimatedFare,
+    distanceKm: distanceKm ?? null,
+    durationMinutes: durationMinutes ?? null,
+    currency: "USD" as const,
+    vehicles: drivers.map((d) => {
+      const capacity = Number(d.passengerCapacity ?? 7);
+      const busy = busySet.has(d._id.toString());
+      const fits = capacity >= passengers;
+      return {
+        id: d._id.toString(),
+        name: d.name,
+        vehicleLabel: d.vehicleLabel || `${capacity}-seater van`,
+        passengerCapacity: capacity,
+        isAvailable: Boolean(d.isAvailable) && !busy,
+        fitsParty: fits,
+        fare: estimatedFare,
+      };
+    }),
+  };
+}
+
 export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: string) {
   const estimate = await estimateFare(input);
   const pickupDate = toUtcDate(input.pickupDate);
 
+  const { driverId: requestedDriverId, ...bookingFields } = input;
+
   const booking = await TaxiBooking.create({
-    ...input,
+    ...bookingFields,
     userId,
     pickupDate,
     customerEmail: input.customerEmail.toLowerCase(),
@@ -117,7 +175,18 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
     estimatedFare: estimate.estimatedFare,
   });
 
-  const freeDriver = await findFreeDriver(pickupDate);
+  const freeDriver = requestedDriverId
+    ? await findFreeDriver(pickupDate, {
+        preferredId: requestedDriverId,
+        minCapacity: input.passengers,
+      })
+    : await findFreeDriver(pickupDate, { minCapacity: input.passengers });
+
+  if (requestedDriverId && !freeDriver) {
+    await TaxiBooking.deleteOne({ _id: booking._id });
+    throw new AppError(409, "That vehicle is not available for this party size or date. Please pick another.");
+  }
+
   if (freeDriver) {
     booking.driverId = freeDriver._id;
     booking.assignedAt = new Date();
@@ -143,7 +212,7 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
   }
 
   const populated = await TaxiBooking.findById(booking.id)
-    .populate("driverId", "name email phone vehicleLabel isAvailable")
+    .populate("driverId", "name email phone vehicleLabel passengerCapacity isAvailable")
     .lean();
 
   if (!populated) {
@@ -218,24 +287,44 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
  * A driver is free if they are active + available and have no overlapping
  * assigned/en_route trip on the same pickup day.
  */
-async function findFreeDriver(pickupDate: Date) {
+async function busyDriverIdsForDate(pickupDate: Date) {
   const dayStart = new Date(pickupDate);
   dayStart.setUTCHours(0, 0, 0, 0);
   const dayEnd = new Date(pickupDate);
   dayEnd.setUTCHours(23, 59, 59, 999);
 
-  const busyIds = await TaxiBooking.distinct("driverId", {
+  return TaxiBooking.distinct("driverId", {
     driverId: { $ne: null },
     status: { $in: ["assigned", "en_route"] },
     pickupDate: { $gte: dayStart, $lte: dayEnd },
   });
+}
+
+async function findFreeDriver(
+  pickupDate: Date,
+  options?: { preferredId?: string; minCapacity?: number },
+) {
+  const busyIds = await busyDriverIdsForDate(pickupDate);
+  const capacityFilter =
+    options?.minCapacity != null ? { passengerCapacity: { $gte: options.minCapacity } } : {};
+
+  if (options?.preferredId) {
+    if (busyIds.some((id) => String(id) === options.preferredId)) return null;
+    return Driver.findOne({
+      _id: options.preferredId,
+      isActive: true,
+      isAvailable: true,
+      ...capacityFilter,
+    }).lean();
+  }
 
   return Driver.findOne({
     isActive: true,
     isAvailable: true,
+    ...capacityFilter,
     ...(busyIds.length ? { _id: { $nin: busyIds } } : {}),
   })
-    .sort({ updatedAt: 1, createdAt: 1 })
+    .sort({ passengerCapacity: 1, updatedAt: 1, createdAt: 1 })
     .lean();
 }
 
@@ -264,7 +353,7 @@ export async function autoAssignNextWaitingTrip(preferredDriverId?: string) {
     }
   }
 
-  const free = await findFreeDriver(waiting.pickupDate);
+  const free = await findFreeDriver(waiting.pickupDate, { minCapacity: waiting.passengers });
   if (!free) return null;
   return assignTaxiDriver(waiting._id.toString(), free._id.toString());
 }
@@ -274,7 +363,7 @@ export async function getPublicTaxiBooking(reference: string, email: string) {
     bookingReference: reference.toUpperCase(),
     customerEmail: email.toLowerCase(),
   })
-    .populate("driverId", "name email phone vehicleLabel")
+    .populate("driverId", "name email phone vehicleLabel passengerCapacity")
     .lean();
   if (!booking) throw new AppError(404, "Taxi booking not found");
   return booking;
@@ -308,7 +397,7 @@ export async function listTaxiBookings(input: AdminTaxiListQuery) {
       .skip(skip)
       .limit(input.limit)
       .populate("userId", "name email phone")
-      .populate("driverId", "name email phone vehicleLabel isAvailable")
+      .populate("driverId", "name email phone vehicleLabel passengerCapacity isAvailable")
       .lean(),
     TaxiBooking.countDocuments(filter),
   ]);
@@ -326,7 +415,7 @@ export async function listTaxiBookings(input: AdminTaxiListQuery) {
 
 export async function getTaxiBookingForAdmin(id: string) {
   const booking = await TaxiBooking.findById(id)
-    .populate("driverId", "name email phone vehicleLabel isAvailable")
+    .populate("driverId", "name email phone vehicleLabel passengerCapacity isAvailable")
     .lean();
   if (!booking) throw new AppError(404, "Taxi booking not found");
   return booking;
@@ -484,7 +573,7 @@ export async function assignTaxiDriver(bookingId: string, driverId: string) {
   });
 
   return TaxiBooking.findById(booking.id)
-    .populate("driverId", "name email phone vehicleLabel isAvailable")
+    .populate("driverId", "name email phone vehicleLabel passengerCapacity isAvailable")
     .lean();
 }
 
