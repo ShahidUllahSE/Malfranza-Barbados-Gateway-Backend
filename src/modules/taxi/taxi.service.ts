@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { Types, type QueryFilter } from "mongoose";
-import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { Driver } from "../drivers/driver.model.js";
 import { createAdminNotification } from "../notifications/admin-notification.service.js";
+import { createUserNotification } from "../notifications/user-notification.service.js";
 import {
   sendAdminNewTaxiBookingEmail,
   sendDriverTripCancelledEmail,
@@ -50,104 +50,25 @@ function demoFareEstimate(
   };
 }
 
-async function requestGoogleRoute(origin: string, destination: string) {
-  if (!env.GOOGLE_MAPS_API_KEY) return null;
-  const response = await fetch(
-    "https://routes.googleapis.com/directions/v2:computeRoutes",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": env.GOOGLE_MAPS_API_KEY,
-        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
-      },
-      body: JSON.stringify({
-        origin: { address: origin },
-        destination: { address: destination },
-        travelMode: "DRIVE",
-        routingPreference: "TRAFFIC_UNAWARE",
-      }),
-      signal: AbortSignal.timeout(10_000),
-    },
-  ).catch((error: unknown) => {
-    console.warn("[taxi] Google Routes request failed — using demo fare", error);
-    return null;
-  });
-  if (!response?.ok) {
-    if (response) {
-      console.warn("[taxi] Google Routes error", response.status, await response.text().catch(() => ""));
-    }
-    return null;
-  }
-  const payload = (await response.json()) as {
-    routes?: Array<{ distanceMeters?: number; duration?: string }>;
-  };
-  return payload.routes?.[0] ?? null;
-}
-
 export async function estimateFare(input: FareEstimateInput) {
-  const settings = await getTaxiSettings();
-  try {
-    const pickup = input.pickupLocation.trim();
-    const dropoff = input.dropoffLocation.trim();
-
-    // Never block a booking on Maps. Try the typed text as-is; demo fare if no route.
-    const route = pickup && dropoff ? await requestGoogleRoute(pickup, dropoff) : null;
-
-    if (!route?.distanceMeters) {
-      return demoFareEstimate(settings, input.passengers);
-    }
-
-    const distanceKm = Math.round((route.distanceMeters / 1000) * 10) / 10;
-    const durationSeconds = route.duration ? Number(route.duration.replace("s", "")) : undefined;
-
-    return {
-      distanceKm,
-      durationMinutes:
-        durationSeconds && Number.isFinite(durationSeconds)
-          ? Math.round(durationSeconds / 60)
-          : 25,
-      estimatedFare: calculateFareFromSettings(settings, distanceKm, input.passengers),
-      currency: "USD" as const,
-      estimated: true as const,
-      guestFare: guestFareFromSettings(settings, input.passengers),
-      perKmUsd: settings.perKmUsd,
-    };
-  } catch (error) {
-    console.warn("[taxi] Fare estimate fell back to demo rates", error);
-    return demoFareEstimate(settings, input.passengers);
-  }
+  // Demo: never call Google Routes. Any typed/map location is accepted.
+  return demoFareEstimate(await getTaxiSettings(), input.passengers);
 }
 
 export async function listPublicVehicles(input: PublicVehiclesQuery) {
   const settings = await getTaxiSettings();
   const passengers = input.passengers;
-  let estimatedFare = guestFareFromSettings(settings, passengers);
-  let distanceKm: number | undefined;
-  let durationMinutes: number | undefined;
+  const estimatedFare = Math.max(
+    settings.minimumFareUsd,
+    guestFareFromSettings(settings, passengers),
+  );
 
-  if (input.pickupLocation && input.dropoffLocation) {
-    try {
-      const estimate = await estimateFare({
-        pickupLocation: input.pickupLocation,
-        dropoffLocation: input.dropoffLocation,
-        passengers,
-      });
-      estimatedFare = estimate.estimatedFare;
-      distanceKm = estimate.distanceKm;
-      durationMinutes = estimate.durationMinutes;
-    } catch {
-      estimatedFare = calculateFareFromSettings(settings, 12, passengers);
-    }
-  } else {
-    estimatedFare = Math.max(settings.minimumFareUsd, estimatedFare);
-  }
-
-  const busyIds =
+  const busySlot =
     input.pickupDate && input.pickupTime
       ? await busyDriverIdsForSlot(toUtcDate(input.pickupDate), input.pickupTime)
-      : [];
-  const busySet = new Set(busyIds.map((id) => String(id)));
+      : { ids: [] as string[], untilByDriver: new Map<string, string>() };
+  const busySet = new Set(busySlot.ids.map((id) => String(id)));
+  const busyUntilByDriver = busySlot.untilByDriver;
 
   const drivers = await Driver.find({ isActive: true })
     .sort({ passengerCapacity: 1, name: 1 })
@@ -164,13 +85,14 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
     .sort({ pickupDate: 1, pickupTime: 1 })
     .lean();
 
-  const slotsByDriver = new Map<string, Array<{ date: string; time: string }>>();
+  const slotsByDriver = new Map<string, Array<{ date: string; time: string; until: string }>>();
   for (const trip of upcoming) {
     const id = String(trip.driverId);
     const list = slotsByDriver.get(id) ?? [];
     list.push({
       date: new Date(trip.pickupDate).toISOString().slice(0, 10),
       time: trip.pickupTime,
+      until: addMinutesToTime(trip.pickupTime, TAXI_SLOT_MINUTES),
     });
     slotsByDriver.set(id, list);
   }
@@ -181,8 +103,8 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
     fare: estimatedFare,
     guestFare,
     passengers,
-    distanceKm: distanceKm ?? null,
-    durationMinutes: durationMinutes ?? null,
+    distanceKm: null,
+    durationMinutes: null,
     currency: "USD" as const,
     vehicles: drivers
       .map((d) => {
@@ -197,6 +119,7 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
           isAvailable: Boolean(d.isAvailable) && !busy,
           fitsParty: fits,
           fare: estimatedFare,
+          busyUntil: busyUntilByDriver.get(d._id.toString()) ?? null,
           bookedSlots: (slotsByDriver.get(d._id.toString()) ?? []).slice(0, 8),
         };
       })
@@ -205,16 +128,20 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
 }
 
 export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: string) {
-  let estimate;
-  try {
-    estimate = await estimateFare(input);
-  } catch (error) {
-    console.warn("[taxi] Booking fare fell back to demo rates", error);
-    estimate = demoFareEstimate(await getTaxiSettings(), input.passengers);
-  }
+  const estimate = await estimateFare(input);
   const pickupDate = toUtcDate(input.pickupDate);
 
   const { driverId: requestedDriverId, ...bookingFields } = input;
+
+  if (requestedDriverId) {
+    const busy = await busyDriverIdsForSlot(pickupDate, input.pickupTime);
+    if (busy.ids.includes(requestedDriverId)) {
+      throw new AppError(
+        409,
+        "This taxi is booked for the next 1 hour. Please choose a time after that window, or another vehicle.",
+      );
+    }
+  }
 
   const booking = await TaxiBooking.create({
     ...bookingFields,
@@ -226,134 +153,116 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
     distanceKm: estimate.distanceKm,
     durationMinutes: estimate.durationMinutes,
     estimatedFare: estimate.estimatedFare,
+    status: "pending",
+    ...(requestedDriverId ? { driverId: requestedDriverId } : {}),
   });
 
-  const freeDriver = await findFreeDriver(pickupDate, {
-    preferredId: requestedDriverId,
-    minCapacity: input.passengers,
-    pickupTime: input.pickupTime,
-  });
-  const vehicleUpgraded = Boolean(
-    requestedDriverId && freeDriver && String(freeDriver._id) !== requestedDriverId,
-  );
-
-  if (!freeDriver && requestedDriverId) {
-    await TaxiBooking.deleteOne({ _id: booking._id });
-    throw new AppError(409, "No vehicle is free for this party size at that date and time.");
-  }
-
-  if (freeDriver) {
-    booking.driverId = freeDriver._id;
-    booking.assignedAt = new Date();
-    booking.status = "assigned";
-    await booking.save();
-    await notifyDriverOfAssignment({
-      driver: {
-        name: freeDriver.name,
-        email: freeDriver.email,
-        phone: freeDriver.phone,
-      },
-      booking: {
-        bookingReference: booking.bookingReference,
-        serviceType: booking.serviceType,
-        pickupLocation: booking.pickupLocation,
-        dropoffLocation: booking.dropoffLocation,
-        pickupDate: booking.pickupDate,
-        pickupTime: booking.pickupTime,
-        customerName: booking.customerName,
-        customerPhone: booking.customerPhone,
-        passengers: Number(booking.passengers),
-        vehicleLabel: freeDriver.vehicleLabel ?? undefined,
-      },
-    });
-  }
-
-  const populated = await TaxiBooking.findById(booking.id)
-    .populate("driverId", "name email phone vehicleLabel passengerCapacity isAvailable")
-    .lean();
-
-  if (!populated) {
-    throw new AppError(500, "Taxi booking could not be loaded after create");
-  }
-
-  const driverDoc =
-    populated.driverId && typeof populated.driverId === "object"
-      ? (populated.driverId as {
-          name?: string;
-          phone?: string;
-          vehicleLabel?: string | null;
-        })
-      : null;
-
-  const pickupDateIso = String(populated.pickupDate).slice(0, 10);
-  const flightMatch = populated.notes?.match(/Flight[:\s]+([A-Z0-9]+)/i);
+  const pickupDateIso = String(booking.pickupDate).slice(0, 10);
+  const flightMatch = booking.notes?.match(/Flight[:\s]+([A-Z0-9]+)/i);
   const flightNumber = flightMatch?.[1];
+  const taxiId = String(booking._id);
 
-  await sendTaxiConfirmationEmail({
-    to: populated.customerEmail,
-    name: populated.customerName,
-    bookingReference: populated.bookingReference,
-    serviceType: populated.serviceType,
-    pickupLocation: populated.pickupLocation,
-    dropoffLocation: populated.dropoffLocation,
-    pickupDate: pickupDateIso,
-    pickupTime: populated.pickupTime,
-    estimatedFare: Number(populated.estimatedFare),
-    currency: "USD",
-    passengers: Number(populated.passengers),
-    flightNumber: flightNumber ?? undefined,
-    driverName: driverDoc?.name ?? null,
-    driverPhone: driverDoc?.phone ?? null,
-    vehicleLabel: driverDoc?.vehicleLabel ?? null,
-  }).catch((error) => {
-    console.error("[email] Failed to send taxi confirmation", error);
+  void Promise.allSettled([
+    sendTaxiConfirmationEmail({
+      to: booking.customerEmail,
+      name: booking.customerName,
+      bookingReference: booking.bookingReference,
+      serviceType: booking.serviceType,
+      pickupLocation: booking.pickupLocation,
+      dropoffLocation: booking.dropoffLocation,
+      pickupDate: pickupDateIso,
+      pickupTime: booking.pickupTime,
+      estimatedFare: Number(booking.estimatedFare),
+      currency: "USD",
+      passengers: Number(booking.passengers),
+      flightNumber: flightNumber ?? undefined,
+      driverName: null,
+      driverPhone: null,
+      vehicleLabel: null,
+      pending: true,
+    }),
+    sendPaymentReceiptEmail({
+      to: booking.customerEmail,
+      name: booking.customerName,
+      bookingReference: booking.bookingReference,
+      totalAmount: Number(booking.estimatedFare),
+      paymentMethod: "Card / demo checkout",
+      stayLabel: undefined,
+      taxiAmount: Number(booking.estimatedFare),
+    }),
+    sendAdminNewTaxiBookingEmail({
+      bookingReference: booking.bookingReference,
+      customerName: booking.customerName,
+      customerEmail: booking.customerEmail,
+      customerPhone: booking.customerPhone,
+      serviceType: booking.serviceType,
+      pickupLocation: booking.pickupLocation,
+      dropoffLocation: booking.dropoffLocation,
+      pickupDate: pickupDateIso,
+      pickupTime: booking.pickupTime,
+      estimatedFare: Number(booking.estimatedFare),
+      passengers: Number(booking.passengers),
+      driverName: null,
+      vehicleLabel: null,
+    }),
+    createAdminNotification({
+      type: "taxi_booking",
+      title: "New taxi booking — pending",
+      body: `${booking.customerName} · ${pickupDateIso} ${booking.pickupTime} · ${booking.pickupLocation} → ${booking.dropoffLocation}`,
+      href: `/admin/taxi/${taxiId}`,
+      entityId: taxiId,
+    }),
+  ]).then((results) => {
+    for (const result of results) {
+      if (result.status === "rejected") {
+        console.error("[taxi] Background notify failed", result.reason);
+      }
+    }
   });
 
-  await sendPaymentReceiptEmail({
-    to: populated.customerEmail,
-    name: populated.customerName,
-    bookingReference: populated.bookingReference,
-    totalAmount: Number(populated.estimatedFare),
-    paymentMethod: "Card / demo checkout",
-    stayLabel: undefined,
-    taxiAmount: Number(populated.estimatedFare),
-  }).catch((error) => {
-    console.error("[email] Failed to send taxi payment receipt", error);
-  });
-
-  await sendAdminNewTaxiBookingEmail({
-    bookingReference: populated.bookingReference,
-    customerName: populated.customerName,
-    customerEmail: populated.customerEmail,
-    customerPhone: populated.customerPhone,
-    serviceType: populated.serviceType,
-    pickupLocation: populated.pickupLocation,
-    dropoffLocation: populated.dropoffLocation,
-    pickupDate: pickupDateIso,
-    pickupTime: populated.pickupTime,
-    estimatedFare: Number(populated.estimatedFare),
-    passengers: Number(populated.passengers),
-    driverName: driverDoc?.name ?? null,
-    vehicleLabel: driverDoc?.vehicleLabel ?? null,
-  }).catch((error) => {
-    console.error("[email] Failed to send admin taxi alert", error);
-  });
-
-  const taxiId = String(populated._id);
-  await createAdminNotification({
-    type: "taxi_booking",
-    title: "New taxi booking",
-    body: `${populated.customerName} · ${pickupDateIso} ${populated.pickupTime} · ${populated.pickupLocation} → ${populated.dropoffLocation}`,
-    href: `/admin/taxi/${taxiId}`,
-    entityId: taxiId,
-  }).catch((error) => {
-    console.error("[notify] Failed to create admin taxi notification", error);
-  });
-
-  return { ...populated, vehicleUpgraded };
+  return { ...booking.toObject(), vehicleUpgraded: false };
 }
 
 const ACTIVE_TAXI_STATUSES = ["pending", "confirmed", "assigned", "en_route"] as const;
+
+function notifyGuestTaxiUpdate(input: {
+  userId?: string | null;
+  email: string;
+  name: string;
+  bookingReference: string;
+  status: string;
+  pickupDate: string;
+  pickupTime: string;
+  driverName?: string | null;
+  entityId?: string;
+}) {
+  const showDriver = Boolean(input.driverName) && input.status === "assigned";
+  void sendTaxiStatusEmail({
+    to: input.email,
+    name: input.name,
+    bookingReference: input.bookingReference,
+    status: input.status,
+    pickupDate: input.pickupDate,
+    pickupTime: input.pickupTime,
+    driverName: showDriver ? input.driverName : null,
+  }).catch((error) => {
+    console.error("[email] Failed to send taxi status email", error);
+  });
+
+  if (!input.userId) return;
+  void createUserNotification({
+    userId: String(input.userId),
+    type: "taxi",
+    title: showDriver ? "Driver assigned — booking confirmed" : "Your taxi booking is confirmed",
+    body: showDriver
+      ? `${input.driverName} is assigned for ${input.pickupDate} at ${input.pickupTime}.`
+      : `Your ride on ${input.pickupDate} at ${input.pickupTime} is confirmed.`,
+    href: "/my-bookings",
+    entityId: input.entityId,
+  }).catch((error) => {
+    console.error("[notify] Failed to create guest taxi notification", error);
+  });
+}
 
 function normalizePickupTime(value: string) {
   const match = value.trim().match(/^(\d{1,2}):(\d{2})/);
@@ -361,33 +270,85 @@ function normalizePickupTime(value: string) {
   return `${String(Number(match[1])).padStart(2, "0")}:${match[2]}`;
 }
 
+/** Each taxi booking occupies the vehicle for 1 hour from pickup. */
+const TAXI_SLOT_MINUTES = 60;
+
+function timeToMinutes(time: string): number {
+  const [hours, minutes] = normalizePickupTime(time).split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function minutesToTime(total: number): string {
+  const wrapped = ((total % (24 * 60)) + 24 * 60) % (24 * 60);
+  const hours = Math.floor(wrapped / 60);
+  const minutes = wrapped % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function addMinutesToTime(time: string, add: number): string {
+  return minutesToTime(timeToMinutes(time) + add);
+}
+
+function slotStartMs(pickupDate: Date, pickupTime: string): number {
+  const [hours, minutes] = normalizePickupTime(pickupTime).split(":").map(Number);
+  const start = new Date(pickupDate);
+  start.setUTCHours(hours, minutes, 0, 0);
+  return start.getTime();
+}
+
+function taxiSlotsOverlap(
+  dateA: Date,
+  timeA: string,
+  dateB: Date,
+  timeB: string,
+): boolean {
+  const startA = slotStartMs(dateA, timeA);
+  const startB = slotStartMs(dateB, timeB);
+  const durationMs = TAXI_SLOT_MINUTES * 60 * 1000;
+  return startA < startB + durationMs && startB < startA + durationMs;
+}
+
 /**
- * A driver is busy only for the same pickup date and time.
- * Other times that day stay bookable.
+ * A driver is busy for 1 hour from pickup (e.g. 15:00 blocks until 16:00).
+ * 16:00 and later that day stay bookable.
  */
-async function busyDriverIdsForSlot(pickupDate: Date, pickupTime?: string, exceptBookingId?: string) {
+export async function busyDriverIdsForSlot(pickupDate: Date, pickupTime?: string, exceptBookingId?: string) {
   const dayStart = new Date(pickupDate);
   dayStart.setUTCHours(0, 0, 0, 0);
-  const dayEnd = new Date(pickupDate);
-  dayEnd.setUTCHours(23, 59, 59, 999);
+  const rangeStart = new Date(dayStart);
+  rangeStart.setUTCDate(rangeStart.getUTCDate() - 1);
+  const rangeEnd = new Date(dayStart);
+  rangeEnd.setUTCDate(rangeEnd.getUTCDate() + 1);
+  rangeEnd.setUTCHours(23, 59, 59, 999);
   const time = pickupTime ? normalizePickupTime(pickupTime) : "";
 
   const trips = await TaxiBooking.find({
     driverId: { $ne: null },
     status: { $in: [...ACTIVE_TAXI_STATUSES] },
-    pickupDate: { $gte: dayStart, $lte: dayEnd },
+    pickupDate: { $gte: rangeStart, $lte: rangeEnd },
     ...(exceptBookingId ? { _id: { $ne: exceptBookingId } } : {}),
   })
-    .select("driverId pickupTime")
+    .select("driverId pickupDate pickupTime")
     .lean();
 
   const busy = new Set<string>();
+  const busyUntil = new Map<string, string>();
   for (const trip of trips) {
     if (!trip.driverId) continue;
-    if (time && normalizePickupTime(trip.pickupTime) !== time) continue;
-    busy.add(String(trip.driverId));
+    const id = String(trip.driverId);
+    if (!time) {
+      const sameDay =
+        new Date(trip.pickupDate).toISOString().slice(0, 10) ===
+        dayStart.toISOString().slice(0, 10);
+      if (!sameDay) continue;
+      busy.add(id);
+      continue;
+    }
+    if (!taxiSlotsOverlap(pickupDate, time, trip.pickupDate, trip.pickupTime)) continue;
+    busy.add(id);
+    busyUntil.set(id, addMinutesToTime(trip.pickupTime, TAXI_SLOT_MINUTES));
   }
-  return [...busy];
+  return { ids: [...busy], untilByDriver: busyUntil };
 }
 
 function driverCapacity(driver: { passengerCapacity?: number | null }) {
@@ -399,7 +360,8 @@ async function findFreeDriver(
   pickupDate: Date,
   options?: { preferredId?: string; minCapacity?: number; pickupTime?: string },
 ) {
-  const busyIds = await busyDriverIdsForSlot(pickupDate, options?.pickupTime);
+  const busySlot = await busyDriverIdsForSlot(pickupDate, options?.pickupTime);
+  const busyIds = busySlot.ids;
   const busySet = new Set(busyIds.map((id) => String(id)));
   const min = options?.minCapacity ?? 1;
 
@@ -548,13 +510,6 @@ export async function updateTaxiBookingStatus(id: string, nextStatus: TaxiStatus
   );
   if (!booking) throw new AppError(404, "Taxi booking not found");
 
-  const previousDriverId = booking.driverId
-    ? String(
-        typeof booking.driverId === "object" && booking.driverId !== null && "_id" in booking.driverId
-          ? (booking.driverId as { _id: unknown })._id
-          : booking.driverId,
-      )
-    : undefined;
   const previousStatus = booking.status;
 
   if (booking.status !== nextStatus) {
@@ -583,16 +538,16 @@ export async function updateTaxiBookingStatus(id: string, nextStatus: TaxiStatus
         : null;
     const driverName = driverDoc?.name ? String(driverDoc.name) : null;
 
-    await sendTaxiStatusEmail({
-      to: booking.customerEmail,
+    notifyGuestTaxiUpdate({
+      userId: booking.userId ? String(booking.userId) : null,
+      email: booking.customerEmail,
       name: booking.customerName,
       bookingReference: booking.bookingReference,
       status: nextStatus,
       pickupDate: String(booking.pickupDate).slice(0, 10),
       pickupTime: booking.pickupTime,
-      driverName: driverName || null,
-    }).catch((error) => {
-      console.error("[email] Failed to send taxi status email", error);
+      driverName: nextStatus === "assigned" ? driverName : null,
+      entityId: String(booking._id),
     });
 
     if (nextStatus === "cancelled" && driverDoc?.email && driverDoc.name) {
@@ -606,11 +561,7 @@ export async function updateTaxiBookingStatus(id: string, nextStatus: TaxiStatus
       }).catch((error) => {
         console.error("[email] Failed to send driver trip cancelled", error);
       });
-    } else if (
-      driverDoc?.email &&
-      driverDoc.name &&
-      (nextStatus === "en_route" || nextStatus === "confirmed")
-    ) {
+    } else if (driverDoc?.email && driverDoc.name && nextStatus === "en_route") {
       await sendDriverTripUpdatedEmail({
         to: String(driverDoc.email),
         driverName: String(driverDoc.name),
@@ -625,14 +576,6 @@ export async function updateTaxiBookingStatus(id: string, nextStatus: TaxiStatus
         console.error("[email] Failed to send driver trip updated", error);
       });
     }
-  }
-
-  // When a trip ends, try to auto-book the next waiting request for a free driver.
-  if (
-    (nextStatus === "completed" || nextStatus === "cancelled") &&
-    previousDriverId
-  ) {
-    await autoAssignNextWaitingTrip(previousDriverId).catch(() => undefined);
   }
 
   return booking;
@@ -656,13 +599,19 @@ export async function assignTaxiDriver(bookingId: string, driverId: string) {
     throw new AppError(409, "This driver is marked unavailable");
   }
 
-  const busyIds = await busyDriverIdsForSlot(
+  const busySlot = await busyDriverIdsForSlot(
     booking.pickupDate,
     booking.pickupTime,
     booking.id,
   );
-  if (busyIds.some((id) => String(id) === driverId)) {
-    throw new AppError(409, "That driver already has a trip at this date and time");
+  if (busySlot.ids.some((id) => String(id) === driverId)) {
+    const until = busySlot.untilByDriver.get(driverId);
+    throw new AppError(
+      409,
+      until
+        ? `That taxi is booked until ${until}. Please pick a later time.`
+        : "That taxi is booked for the next 1 hour.",
+    );
   }
 
   const previousDriverId = booking.driverId ? String(booking.driverId) : null;
@@ -689,7 +638,7 @@ export async function assignTaxiDriver(bookingId: string, driverId: string) {
     });
   }
 
-  await notifyDriverOfAssignment({
+  void notifyDriverOfAssignment({
     driver: {
       name: driver.name,
       email: driver.email,
@@ -707,9 +656,11 @@ export async function assignTaxiDriver(bookingId: string, driverId: string) {
       passengers: Number(booking.passengers),
       vehicleLabel: driver.vehicleLabel ?? undefined,
     },
+  }).catch((error) => {
+    console.error("[notify] Failed to alert assigned driver", error);
   });
 
-  await sendTaxiStatusEmail({
+  void sendTaxiStatusEmail({
     to: booking.customerEmail,
     name: booking.customerName,
     bookingReference: booking.bookingReference,
@@ -720,6 +671,19 @@ export async function assignTaxiDriver(bookingId: string, driverId: string) {
   }).catch((error) => {
     console.error("[email] Failed to send guest taxi assignment update", error);
   });
+
+  if (booking.userId) {
+    void createUserNotification({
+      userId: String(booking.userId),
+      type: "taxi",
+      title: "Driver assigned — booking confirmed",
+      body: `${driver.name} is assigned for ${String(booking.pickupDate).slice(0, 10)} at ${booking.pickupTime}.`,
+      href: "/my-bookings",
+      entityId: String(booking._id),
+    }).catch((error) => {
+      console.error("[notify] Failed to create guest assignment notification", error);
+    });
+  }
 
   return TaxiBooking.findById(booking.id)
     .populate("driverId", "name email phone vehicleLabel passengerCapacity isAvailable")

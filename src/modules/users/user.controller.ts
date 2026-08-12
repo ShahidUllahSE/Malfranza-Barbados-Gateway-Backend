@@ -13,6 +13,11 @@ import {
   verifySignupOtp,
 } from "./user.service.js";
 import {
+  listUserNotifications,
+  markAllUserNotificationsRead,
+  markUserNotificationRead,
+} from "../notifications/user-notification.service.js";
+import {
   loginUserSchema,
   passwordResetConfirmSchema,
   passwordResetRequestSchema,
@@ -90,4 +95,20 @@ export const getMyBookingByReference: RequestHandler = async (request, response)
 export const getMyTaxiBookings: RequestHandler = async (request, response) => {
   const items = await listUserTaxiBookings(request.user!.id);
   response.status(200).json({ success: true, data: { items } });
+};
+
+export const getMyNotifications: RequestHandler = async (request, response) => {
+  const limit = request.query.limit ? Number(request.query.limit) : undefined;
+  const data = await listUserNotifications(request.user!.id, { limit });
+  response.status(200).json({ success: true, data });
+};
+
+export const patchMyNotificationRead: RequestHandler = async (request, response) => {
+  const data = await markUserNotificationRead(request.user!.id, String(request.params.id));
+  response.status(200).json({ success: true, data });
+};
+
+export const postMyNotificationsReadAll: RequestHandler = async (request, response) => {
+  const data = await markAllUserNotificationsRead(request.user!.id);
+  response.status(200).json({ success: true, data });
 };

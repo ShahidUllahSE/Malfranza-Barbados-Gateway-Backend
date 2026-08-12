@@ -5,7 +5,6 @@ import type { QueryFilter } from "mongoose";
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { TaxiBooking } from "../taxi/taxi.model.js";
-import { autoAssignNextWaitingTrip } from "../taxi/taxi.service.js";
 import { Driver } from "./driver.model.js";
 import type {
   AdminDriverDetailQuery,
@@ -151,10 +150,6 @@ export async function updateDriver(id: string, input: UpdateDriverInput) {
     throw error;
   }
 
-  if (input.isAvailable === true && driver.isActive) {
-    await autoAssignNextWaitingTrip(driver.id).catch(() => undefined);
-  }
-
   return toDriverIdentity({
     id: driver.id,
     email: driver.email,
@@ -243,11 +238,6 @@ export async function setDriverAvailability(driverId: string, isAvailable: boole
     { new: true },
   );
   if (!driver) throw new AppError(404, "Driver not found");
-
-  // Coming back online → claim the oldest waiting taxi request if free.
-  if (isAvailable) {
-    await autoAssignNextWaitingTrip(driverId).catch(() => undefined);
-  }
 
   return toDriverIdentity({
     id: driver.id,

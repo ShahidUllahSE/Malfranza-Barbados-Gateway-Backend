@@ -91,7 +91,7 @@ export const postTaxiBooking: RequestHandler = async (request, response) => {
   const booking = await createTaxiBooking({ ...input, ...customer }, user.id);
 
   if (accountCreated && plainPassword) {
-    await sendGuestCredentialsEmail({
+    void sendGuestCredentialsEmail({
       to: user.email,
       name: customer.customerName,
       password: plainPassword,
@@ -124,8 +124,8 @@ export const postTaxiBooking: RequestHandler = async (request, response) => {
         phone: user.phone ?? null,
         role: "user" as const,
       },
-      driver:
-        booking.driverId && typeof booking.driverId === "object"
+      driver: ["assigned", "en_route", "completed"].includes(String(booking.status))
+        && booking.driverId && typeof booking.driverId === "object"
           ? {
               id: String((booking.driverId as { _id?: unknown })._id ?? ""),
               name: (booking.driverId as { name?: string }).name ?? "Driver",

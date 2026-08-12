@@ -5,8 +5,11 @@ import {
   getMe,
   getMyBookingByReference,
   getMyBookings,
+  getMyNotifications,
   getMyTaxiBookings,
+  patchMyNotificationRead,
   postLogin,
+  postMyNotificationsReadAll,
   postPasswordResetConfirm,
   postPasswordResetRequest,
   postRegister,
@@ -28,3 +31,6 @@ userRouter.get("/me", authenticateUser, getMe);
 userRouter.get("/me/bookings", authenticateUser, getMyBookings);
 userRouter.get("/me/bookings/:reference", authenticateUser, getMyBookingByReference);
 userRouter.get("/me/taxi", authenticateUser, getMyTaxiBookings);
+userRouter.get("/me/notifications", authenticateUser, getMyNotifications);
+userRouter.patch("/me/notifications/:id/read", authenticateUser, patchMyNotificationRead);
+userRouter.post("/me/notifications/read-all", authenticateUser, postMyNotificationsReadAll);

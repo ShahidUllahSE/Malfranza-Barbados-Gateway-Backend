@@ -21,6 +21,7 @@ import {
   updateDriverSchema,
 } from "./driver.validation.js";
 import {
+  busyDriverIdsForSlot,
   updateDriverTaxiStatus,
   type DriverTaxiStatus,
 } from "../taxi/taxi.service.js";
@@ -38,8 +39,21 @@ export const getAdminDrivers: RequestHandler = async (request, response) => {
   response.status(200).json({ success: true, data: result });
 };
 
-export const getAdminAvailableDrivers: RequestHandler = async (_request, response) => {
+export const getAdminAvailableDrivers: RequestHandler = async (request, response) => {
   const items = await listAvailableDrivers();
+  const pickupDate =
+    typeof request.query.pickupDate === "string" ? request.query.pickupDate : "";
+  const pickupTime =
+    typeof request.query.pickupTime === "string" ? request.query.pickupTime : "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(pickupDate) && /^([01]\d|2[0-3]):[0-5]\d$/.test(pickupTime)) {
+    const busy = await busyDriverIdsForSlot(new Date(`${pickupDate}T00:00:00.000Z`), pickupTime);
+    const busySet = new Set(busy.ids);
+    response.status(200).json({
+      success: true,
+      data: { items: items.filter((driver) => !busySet.has(driver.id)) },
+    });
+    return;
+  }
   response.status(200).json({ success: true, data: { items } });
 };
 

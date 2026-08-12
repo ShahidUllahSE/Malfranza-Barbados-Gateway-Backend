@@ -433,16 +433,22 @@ export async function sendTaxiConfirmationEmail(input: {
   driverName?: string | null;
   driverPhone?: string | null;
   vehicleLabel?: string | null;
+  pending?: boolean;
 }) {
   const greeter = firstName(input.name);
   const portal = siteUrl("/my-bookings");
+  const pending = Boolean(input.pending);
   return mail(
     input.to,
-    `Your Malfranza ride is confirmed — ${input.pickupDate}`,
+    pending
+      ? `We received your Malfranza ride request — ${input.pickupDate}`
+      : `Your Malfranza ride is confirmed — ${input.pickupDate}`,
     [
       `Hi ${greeter},`,
       "",
-      "Your ride with Malfranza is booked and confirmed.",
+      pending
+        ? "We received your taxi booking. It is pending confirmation from Malfranza."
+        : "Your ride with Malfranza is booked and confirmed.",
       `Booking reference: ${input.bookingReference}`,
       `Date & time: ${input.pickupDate} ${input.pickupTime}`,
       input.flightNumber ? `Flight: ${input.flightNumber}` : "",
@@ -451,14 +457,20 @@ export async function sendTaxiConfirmationEmail(input: {
       input.passengers != null ? `Passengers: ${input.passengers}` : "",
       `Vehicle: ${input.vehicleLabel || input.serviceType}`,
       `Total: ${money(input.estimatedFare)}`,
-      input.driverName
-        ? `Driver: ${input.driverName}${input.driverPhone ? ` · ${input.driverPhone}` : ""}`
-        : "We'll assign your driver ahead of your trip.",
+      pending
+        ? "We'll email you again when your booking is confirmed."
+        : input.driverName
+          ? `Driver: ${input.driverName}${input.driverPhone ? ` · ${input.driverPhone}` : ""}`
+          : "We'll assign your driver ahead of your trip.",
       `View: ${portal}`,
       `Changes? Call ${PHONE}.`,
     ].filter(Boolean),
     `<p>Hi ${escapeHtml(greeter)},</p>
-     <p>Your ride with Malfranza is booked and confirmed.</p>
+     <p>${
+       pending
+         ? "We received your taxi booking. It is pending confirmation from Malfranza."
+         : "Your ride with Malfranza is booked and confirmed."
+     }</p>
      <ul>
        <li><strong>Reference:</strong> ${escapeHtml(input.bookingReference)}</li>
        <li><strong>Date &amp; time:</strong> ${escapeHtml(input.pickupDate)} ${escapeHtml(input.pickupTime)}</li>
@@ -469,9 +481,11 @@ export async function sendTaxiConfirmationEmail(input: {
        <li><strong>Total paid:</strong> ${money(input.estimatedFare)}</li>
      </ul>
      ${
-       input.driverName
-         ? `<p><strong>Driver:</strong> ${escapeHtml(input.driverName)}</p>`
-         : "<p>We'll assign your driver ahead of your trip and share their details closer to the time.</p>"
+       pending
+         ? "<p>We'll email you again when your booking is confirmed.</p>"
+         : input.driverName
+           ? `<p><strong>Driver:</strong> ${escapeHtml(input.driverName)}</p>`
+           : "<p>We'll assign your driver ahead of your trip and share their details closer to the time.</p>"
      }
      <p><a href="${portal}" style="color:#2D5A3D;font-weight:600;">My Bookings</a> · Call ${escapeHtml(PHONE)}</p>`,
   );
@@ -487,32 +501,43 @@ export async function sendTaxiStatusEmail(input: {
   driverName?: string | null;
 }) {
   const greeter = firstName(input.name);
-  const isCancel = input.status === "cancelled";
+    const isCancel = input.status === "cancelled";
+    const isConfirmed = input.status === "confirmed" || input.status === "assigned";
+    const statusLine = isCancel
+      ? `Your taxi booking ${input.bookingReference} has been cancelled.`
+      : isConfirmed
+        ? input.driverName
+          ? `Your taxi booking ${input.bookingReference} is confirmed. ${input.driverName} is assigned as your driver.`
+          : `Your taxi booking ${input.bookingReference} is confirmed.`
+        : `Your taxi booking ${input.bookingReference} is now: ${input.status.replaceAll("_", " ")}.`;
+    const statusHtml = isCancel
+      ? `Your taxi booking <strong>${escapeHtml(input.bookingReference)}</strong> has been cancelled.`
+      : isConfirmed
+        ? input.driverName
+          ? `Your taxi booking <strong>${escapeHtml(input.bookingReference)}</strong> is confirmed. <strong>${escapeHtml(input.driverName)}</strong> is assigned as your driver.`
+          : `Your taxi booking <strong>${escapeHtml(input.bookingReference)}</strong> is confirmed.`
+        : `Your taxi booking <strong>${escapeHtml(input.bookingReference)}</strong> is now: <strong>${escapeHtml(input.status.replaceAll("_", " "))}</strong>.`;
   return mail(
     input.to,
     isCancel
       ? `Your Malfranza ride has been cancelled — ${input.bookingReference}`
-      : `Your Malfranza ride update — ${input.bookingReference}`,
+      : isConfirmed
+        ? `Your Malfranza ride is confirmed — ${input.bookingReference}`
+        : `Your Malfranza ride update — ${input.bookingReference}`,
     [
       `Hi ${greeter},`,
       "",
-      isCancel
-        ? `Your taxi booking ${input.bookingReference} has been cancelled.`
-        : `Your taxi booking ${input.bookingReference} is now: ${input.status}.`,
+      statusLine,
       input.pickupDate && input.pickupTime
         ? `When: ${input.pickupDate} at ${input.pickupTime}`
         : "",
-      input.driverName ? `Driver: ${input.driverName}` : "",
+      input.driverName && !isConfirmed ? `Driver: ${input.driverName}` : "",
       `Call ${PHONE} with any questions.`,
     ].filter(Boolean),
     `<p>Hi ${escapeHtml(greeter)},</p>
-     <p>${
-       isCancel
-         ? `Your taxi booking <strong>${escapeHtml(input.bookingReference)}</strong> has been cancelled.`
-         : `Your taxi booking <strong>${escapeHtml(input.bookingReference)}</strong> is now: <strong>${escapeHtml(input.status)}</strong>.`
-     }</p>
+     <p>${statusHtml}</p>
      ${input.pickupDate && input.pickupTime ? `<p>When: ${escapeHtml(input.pickupDate)} at ${escapeHtml(input.pickupTime)}</p>` : ""}
-     ${input.driverName ? `<p>Driver: ${escapeHtml(input.driverName)}</p>` : ""}`,
+     ${input.driverName && !isConfirmed ? `<p>Driver: ${escapeHtml(input.driverName)}</p>` : ""}`,
   );
 }
 

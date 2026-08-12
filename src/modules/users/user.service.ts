@@ -415,11 +415,17 @@ export async function getUserBookingByReference(userId: string, reference: strin
 }
 
 export async function listUserTaxiBookings(userId: string) {
-  return TaxiBooking.find({ userId })
+  const items = await TaxiBooking.find({ userId })
     .sort({ createdAt: -1 })
     .limit(100)
     .populate("driverId", "name email phone vehicleLabel")
     .lean();
+
+  return items.map((trip) => {
+    const showDriver =
+      trip.status === "assigned" || trip.status === "en_route" || trip.status === "completed";
+    return showDriver ? trip : { ...trip, driverId: null };
+  });
 }
 
 export async function requestUserPasswordReset(emailRaw: string) {
