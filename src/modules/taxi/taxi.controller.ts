@@ -58,8 +58,18 @@ export const getPublicTaxiSettings: RequestHandler = async (_request, response) 
 
 export const getPublicVehicles: RequestHandler = async (request, response) => {
   const input = publicVehiclesQuerySchema.parse(request.query);
-  const data = await listPublicVehicles(input);
-  response.status(200).json({ success: true, data });
+  try {
+    const data = await listPublicVehicles(input);
+    response.status(200).json({ success: true, data });
+  } catch (error) {
+    console.warn("[taxi] Vehicles list fell back after error", error);
+    const data = await listPublicVehicles({
+      passengers: input.passengers,
+      pickupDate: input.pickupDate,
+      pickupTime: input.pickupTime,
+    });
+    response.status(200).json({ success: true, data });
+  }
 };
 
 export const postFareEstimate: RequestHandler = async (request, response) => {

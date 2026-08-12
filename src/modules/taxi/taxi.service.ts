@@ -87,36 +87,36 @@ async function requestGoogleRoute(origin: string, destination: string) {
 
 export async function estimateFare(input: FareEstimateInput) {
   const settings = await getTaxiSettings();
-  const pickup = input.pickupLocation.trim();
-  const dropoff = input.dropoffLocation.trim();
+  try {
+    const pickup = input.pickupLocation.trim();
+    const dropoff = input.dropoffLocation.trim();
 
-  // Demo: accept any typed location. Try the address as entered, then with Barbados.
-  const route =
-    (await requestGoogleRoute(pickup, dropoff)) ??
-    (await requestGoogleRoute(
-      /barbados/i.test(pickup) ? pickup : `${pickup}, Barbados`,
-      /barbados/i.test(dropoff) ? dropoff : `${dropoff}, Barbados`,
-    ));
+    // Never block a booking on Maps. Try the typed text as-is; demo fare if no route.
+    const route = pickup && dropoff ? await requestGoogleRoute(pickup, dropoff) : null;
 
-  if (!route?.distanceMeters) {
+    if (!route?.distanceMeters) {
+      return demoFareEstimate(settings, input.passengers);
+    }
+
+    const distanceKm = Math.round((route.distanceMeters / 1000) * 10) / 10;
+    const durationSeconds = route.duration ? Number(route.duration.replace("s", "")) : undefined;
+
+    return {
+      distanceKm,
+      durationMinutes:
+        durationSeconds && Number.isFinite(durationSeconds)
+          ? Math.round(durationSeconds / 60)
+          : 25,
+      estimatedFare: calculateFareFromSettings(settings, distanceKm, input.passengers),
+      currency: "USD" as const,
+      estimated: true as const,
+      guestFare: guestFareFromSettings(settings, input.passengers),
+      perKmUsd: settings.perKmUsd,
+    };
+  } catch (error) {
+    console.warn("[taxi] Fare estimate fell back to demo rates", error);
     return demoFareEstimate(settings, input.passengers);
   }
-
-  const distanceKm = Math.round((route.distanceMeters / 1000) * 10) / 10;
-  const durationSeconds = route.duration ? Number(route.duration.replace("s", "")) : undefined;
-
-  return {
-    distanceKm,
-    durationMinutes:
-      durationSeconds && Number.isFinite(durationSeconds)
-        ? Math.round(durationSeconds / 60)
-        : 25,
-    estimatedFare: calculateFareFromSettings(settings, distanceKm, input.passengers),
-    currency: "USD" as const,
-    estimated: true as const,
-    guestFare: guestFareFromSettings(settings, input.passengers),
-    perKmUsd: settings.perKmUsd,
-  };
 }
 
 export async function listPublicVehicles(input: PublicVehiclesQuery) {
@@ -205,7 +205,13 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
 }
 
 export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: string) {
-  const estimate = await estimateFare(input);
+  let estimate;
+  try {
+    estimate = await estimateFare(input);
+  } catch (error) {
+    console.warn("[taxi] Booking fare fell back to demo rates", error);
+    estimate = demoFareEstimate(await getTaxiSettings(), input.passengers);
+  }
   const pickupDate = toUtcDate(input.pickupDate);
 
   const { driverId: requestedDriverId, ...bookingFields } = input;
