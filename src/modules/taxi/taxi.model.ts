@@ -33,6 +33,15 @@ const taxiBookingSchema = new Schema(
     durationMinutes: { type: Number, min: 0 },
     estimatedFare: { type: Number, required: true, min: 0 },
     currency: { type: String, enum: ["USD"], default: "USD", required: true },
+    paymentStatus: {
+      type: String,
+      enum: ["unpaid", "paid"],
+      default: "unpaid",
+      required: true,
+      index: true,
+    },
+    paymentReference: { type: String, trim: true, maxlength: 120 },
+    paymentMethod: { type: String, trim: true, maxlength: 40 },
     status: {
       type: String,
       enum: ["pending", "confirmed", "assigned", "en_route", "completed", "cancelled"],

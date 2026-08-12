@@ -27,6 +27,9 @@ export const createTaxiBookingSchema = z.object({
   customerPhone: z.string().trim().min(6).max(40),
   notes: z.string().trim().max(2000).optional(),
   driverId: z.string().refine(Types.ObjectId.isValid, "Invalid driver ID").optional(),
+  paymentStatus: z.enum(["unpaid", "paid"]),
+  paymentReference: z.string().trim().min(3).max(120),
+  paymentMethod: z.string().trim().max(40).optional(),
 });
 
 export const publicVehiclesQuerySchema = z.object({

@@ -128,10 +128,14 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
 }
 
 export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: string) {
+  if (input.paymentStatus !== "paid" || !input.paymentReference?.trim()) {
+    throw new AppError(400, "Pay with PayPal before booking this taxi ride");
+  }
+
   const estimate = await estimateFare(input);
   const pickupDate = toUtcDate(input.pickupDate);
 
-  const { driverId: requestedDriverId, ...bookingFields } = input;
+  const { driverId: requestedDriverId, paymentMethod, ...bookingFields } = input;
 
   if (requestedDriverId) {
     const busy = await busyDriverIdsForSlot(pickupDate, input.pickupTime);
@@ -153,6 +157,9 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
     distanceKm: estimate.distanceKm,
     durationMinutes: estimate.durationMinutes,
     estimatedFare: estimate.estimatedFare,
+    paymentStatus: "paid",
+    paymentReference: input.paymentReference.trim(),
+    paymentMethod: paymentMethod?.trim() || "PayPal",
     status: "pending",
     ...(requestedDriverId ? { driverId: requestedDriverId } : {}),
   });
@@ -186,7 +193,7 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
       name: booking.customerName,
       bookingReference: booking.bookingReference,
       totalAmount: Number(booking.estimatedFare),
-      paymentMethod: "Card / demo checkout",
+      paymentMethod: booking.paymentMethod || "PayPal",
       stayLabel: undefined,
       taxiAmount: Number(booking.estimatedFare),
     }),
@@ -208,7 +215,7 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
     createAdminNotification({
       type: "taxi_booking",
       title: "New taxi booking — pending",
-      body: `${booking.customerName} · ${pickupDateIso} ${booking.pickupTime} · ${booking.pickupLocation} → ${booking.dropoffLocation}`,
+      body: `${booking.customerName} · ${pickupDateIso} ${booking.pickupTime} · paid · ${booking.pickupLocation} → ${booking.dropoffLocation}`,
       href: `/admin/taxi/${taxiId}`,
       entityId: taxiId,
     }),
