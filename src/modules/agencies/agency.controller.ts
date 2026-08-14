@@ -7,11 +7,17 @@ import {
   requestAgencyPasswordReset,
   resetAgencyPassword,
 } from "./agency.service.js";
+import { getAgencyCommissionSettings } from "./agency-settings.service.js";
 import {
   agencyPasswordResetConfirmSchema,
   agencyPasswordResetRequestSchema,
   loginAgencySchema,
 } from "./agency.validation.js";
+
+export const getPublicAgencyCommissionRate: RequestHandler = async (_request, response) => {
+  const settings = await getAgencyCommissionSettings();
+  response.status(200).json({ success: true, data: settings });
+};
 
 export const postLoginAgency: RequestHandler = async (request, response) => {
   const input = loginAgencySchema.parse(request.body);

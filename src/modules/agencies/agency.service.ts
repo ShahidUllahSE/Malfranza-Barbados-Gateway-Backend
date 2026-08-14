@@ -13,6 +13,7 @@ import {
   AGENCY_COMMISSION_RATE,
   TravelAgency,
 } from "./agency.model.js";
+import { getDefaultCommissionRate } from "./agency-settings.service.js";
 import type {
   AgencyCommissionQuery,
   LoginAgencyInput,
@@ -87,6 +88,7 @@ export async function createAgencyByAdmin(input: RegisterAgencyInput) {
 
   const agencyCode = await generateUniqueAgencyCode();
   const passwordHash = await bcrypt.hash(input.password, 12);
+  const commissionRate = await getDefaultCommissionRate();
 
   const agency = await TravelAgency.create({
     agencyName: input.agencyName.trim(),
@@ -95,7 +97,7 @@ export async function createAgencyByAdmin(input: RegisterAgencyInput) {
     phone: input.phone.trim(),
     passwordHash,
     agencyCode,
-    commissionRate: AGENCY_COMMISSION_RATE,
+    commissionRate,
     isActive: true,
   });
 
@@ -106,6 +108,7 @@ export async function createAgencyByAdmin(input: RegisterAgencyInput) {
     contactName: agency.contactName,
     agencyName: agency.agencyName,
     agencyCode: agency.agencyCode,
+    commissionRate,
   }).catch((error) => {
     console.error("[email] Failed to send agency welcome", error);
   });
@@ -422,7 +425,7 @@ export async function adminCommissionReport(query: AgencyCommissionQuery) {
       toDate: query.toDate ?? null,
       agencyCode: query.agencyCode ?? null,
     },
-    commissionRate: AGENCY_COMMISSION_RATE,
+    commissionRate: await getDefaultCommissionRate(),
     totals: {
       bookings: totals.bookings,
       stayRevenue: money(totals.stayRevenue),

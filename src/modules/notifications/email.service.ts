@@ -77,13 +77,27 @@ const SIG =
 
 const FOOTER_TEXT = `Malfranza Apartments & Taxi, Barbados · You're receiving this because you booked or created an account with us. · ${siteUrl("/privacy")}`;
 
+function emailLogoUrl() {
+  return siteUrl("/malfranza-logo.png");
+}
+
 function wrapHtml(body: string) {
+  const logoUrl = emailLogoUrl();
   return `
   <div style="font-family:Georgia,'Times New Roman',serif;background:#f4f1ea;padding:24px 12px;">
     <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
-      <div style="background:#2D5A3D;color:#fff;padding:18px 22px;">
-        <div style="font-size:18px;font-weight:700;letter-spacing:0.02em;">Malfranza</div>
-        <div style="font-size:12px;opacity:0.9;margin-top:2px;">Apartments &amp; Taxi · Barbados</div>
+      <div style="background:#ffffff;padding:20px 22px 16px;text-align:center;border-bottom:3px solid #2D5A3D;">
+        <a href="${siteUrl("/")}" style="text-decoration:none;display:inline-block;">
+          <img
+            src="${logoUrl}"
+            width="200"
+            alt="Malfranza Apartments &amp; Taxi"
+            style="display:block;margin:0 auto;width:200px;max-width:70%;height:auto;border:0;outline:none;"
+          />
+        </a>
+        <div style="font-size:12px;color:#4a5a5a;margin-top:10px;font-family:system-ui,-apple-system,sans-serif;">
+          Apartments &amp; Taxi · Barbados
+        </div>
       </div>
       <div style="padding:22px;color:#1F2A2A;line-height:1.55;font-size:15px;font-family:system-ui,-apple-system,sans-serif;">
         ${body}
@@ -295,6 +309,7 @@ export async function sendStayStatusEmail(input: {
   checkIn?: string;
   checkOut?: string;
   changeSummary?: string;
+  refundNote?: string;
 }) {
   const greeter = firstName(input.name);
   const isCancel = input.status === "cancelled";
@@ -317,7 +332,8 @@ export async function sendStayStatusEmail(input: {
       input.checkIn && input.checkOut ? `Dates: ${input.checkIn} → ${input.checkOut}` : "",
       input.changeSummary ? `What changed: ${input.changeSummary}` : `Status: ${input.status}`,
       isCancel
-        ? "Please see our booking policy for any cancellation fee or refund details."
+        ? input.refundNote ||
+          "Please see our booking policy for any cancellation fee or refund details."
         : "",
       `Review: ${portalUrl}`,
       `Questions? Call ${PHONE}.`,
@@ -330,7 +346,14 @@ export async function sendStayStatusEmail(input: {
        ${input.checkIn && input.checkOut ? `<li><strong>Dates:</strong> ${escapeHtml(input.checkIn)} → ${escapeHtml(input.checkOut)}</li>` : ""}
        <li><strong>${isCancel ? "Status" : "Update"}:</strong> ${escapeHtml(input.changeSummary || input.status)}</li>
      </ul>
-     ${isCancel ? `<p style="font-size:13px;color:#4a5a5a;">Please see our booking policy for any cancellation fee or refund. Questions? Call ${escapeHtml(PHONE)}.</p>` : ""}
+     ${
+       isCancel
+         ? `<p style="font-size:13px;color:#4a5a5a;">${escapeHtml(
+             input.refundNote ||
+               "Please see our booking policy for any cancellation fee or refund. Questions? Call " + PHONE + ".",
+           )}</p>`
+         : ""
+     }
      <p><a href="${portalUrl}" style="color:#2D5A3D;font-weight:600;">My Bookings</a></p>`,
   );
 }
@@ -499,6 +522,7 @@ export async function sendTaxiStatusEmail(input: {
   pickupDate?: string;
   pickupTime?: string;
   driverName?: string | null;
+  refundNote?: string;
 }) {
   const greeter = firstName(input.name);
     const isCancel = input.status === "cancelled";
@@ -532,12 +556,14 @@ export async function sendTaxiStatusEmail(input: {
         ? `When: ${input.pickupDate} at ${input.pickupTime}`
         : "",
       input.driverName && !isConfirmed ? `Driver: ${input.driverName}` : "",
+      input.refundNote || "",
       `Call ${PHONE} with any questions.`,
     ].filter(Boolean),
     `<p>Hi ${escapeHtml(greeter)},</p>
      <p>${statusHtml}</p>
      ${input.pickupDate && input.pickupTime ? `<p>When: ${escapeHtml(input.pickupDate)} at ${escapeHtml(input.pickupTime)}</p>` : ""}
-     ${input.driverName && !isConfirmed ? `<p>Driver: ${escapeHtml(input.driverName)}</p>` : ""}`,
+     ${input.driverName && !isConfirmed ? `<p>Driver: ${escapeHtml(input.driverName)}</p>` : ""}
+     ${input.refundNote ? `<p style="font-size:13px;color:#4a5a5a;">${escapeHtml(input.refundNote)}</p>` : ""}`,
   );
 }
 
@@ -645,7 +671,9 @@ export async function sendAgencyWelcomeEmail(input: {
   contactName: string;
   agencyName: string;
   agencyCode: string;
+  commissionRate?: number;
 }) {
+  const pct = Math.round(Number(input.commissionRate ?? 0.1) * 100);
   const portal = siteUrl("/agency");
   return mail(
     input.to,
@@ -657,7 +685,7 @@ export async function sendAgencyWelcomeEmail(input: {
       "Your agency account is now active.",
       "",
       `Your unique booking code: ${input.agencyCode}`,
-      "Enter this code at checkout when booking for clients. You earn 10% commission on the stay.",
+      `Enter this code at checkout when booking for clients. You earn ${pct}% commission on the stay.`,
       `Portal: ${portal}`,
     ],
     `<p>Hi ${escapeHtml(firstName(input.contactName))},</p>
@@ -665,7 +693,7 @@ export async function sendAgencyWelcomeEmail(input: {
      <p>Your agency account is now active. From your portal you can track bookings and commission.</p>
      <p>Your unique booking code:</p>
      <p style="font-size:22px;font-weight:700;letter-spacing:0.06em;color:#2D5A3D;font-family:monospace;">${escapeHtml(input.agencyCode)}</p>
-     <p>How it works: enter this code at checkout. Every booking with your code is credited to you at <strong>10% commission</strong> on the room total.</p>
+     <p>How it works: enter this code at checkout. Every booking with your code is credited to you at <strong>${pct}% commission</strong> on the room total.</p>
      <p><a href="${portal}" style="color:#E07A3D;font-weight:600;">Open agency portal</a></p>`,
   );
 }
@@ -689,7 +717,9 @@ export async function sendAgencyNewBookingEmail(input: {
   checkOut: string;
   bookingValue: number;
   commissionAmount: number;
+  commissionRate?: number;
 }) {
+  const pct = Math.round(Number(input.commissionRate ?? 0.1) * 100);
   const portal = siteUrl("/agency");
   return mail(
     input.to,
@@ -702,7 +732,7 @@ export async function sendAgencyNewBookingEmail(input: {
       `Stay: ${input.apartmentName}`,
       `Dates: ${input.checkIn} → ${input.checkOut}`,
       `Booking value: ${money(input.bookingValue)}`,
-      `Your commission (10%): ${money(input.commissionAmount)}`,
+      `Your commission (${pct}%): ${money(input.commissionAmount)}`,
       `Portal: ${portal}`,
     ],
     `<p>Hi ${escapeHtml(firstName(input.contactName))},</p>
@@ -712,7 +742,7 @@ export async function sendAgencyNewBookingEmail(input: {
        <li><strong>Stay:</strong> ${escapeHtml(input.apartmentName)}</li>
        <li><strong>Dates:</strong> ${escapeHtml(input.checkIn)} → ${escapeHtml(input.checkOut)}</li>
        <li><strong>Booking value:</strong> ${money(input.bookingValue)}</li>
-       <li><strong>Your commission (10%):</strong> ${money(input.commissionAmount)}</li>
+       <li><strong>Your commission (${pct}%):</strong> ${money(input.commissionAmount)}</li>
      </ul>
      <p><a href="${portal}" style="color:#2D5A3D;font-weight:600;">View running total in portal</a></p>`,
   );
@@ -726,7 +756,9 @@ export async function sendAgencyCommissionStatementEmail(input: {
   bookings: number;
   totalValue: number;
   totalCommission: number;
+  commissionRate?: number;
 }) {
+  const pct = Math.round(Number(input.commissionRate ?? 0.1) * 100);
   const portal = siteUrl("/agency");
   return mail(
     input.to,
@@ -738,7 +770,7 @@ export async function sendAgencyCommissionStatementEmail(input: {
       `Code: ${input.agencyCode}`,
       `Bookings: ${input.bookings}`,
       `Total booking value: ${money(input.totalValue)}`,
-      `Total commission (10%): ${money(input.totalCommission)}`,
+      `Total commission (${pct}%): ${money(input.totalCommission)}`,
       `Status: DUE`,
       `Portal: ${portal}`,
     ],
@@ -748,7 +780,7 @@ export async function sendAgencyCommissionStatementEmail(input: {
        <li><strong>Code:</strong> ${escapeHtml(input.agencyCode)}</li>
        <li><strong>Bookings:</strong> ${input.bookings}</li>
        <li><strong>Total value:</strong> ${money(input.totalValue)}</li>
-       <li><strong>Total commission (10%):</strong> ${money(input.totalCommission)}</li>
+       <li><strong>Total commission (${pct}%):</strong> ${money(input.totalCommission)}</li>
        <li><strong>Status:</strong> DUE</li>
      </ul>
      <p><a href="${portal}">Open portal for full breakdown</a></p>`,
@@ -1037,8 +1069,11 @@ export async function sendAdminBookingChangedEmail(input: {
   bookingReference: string;
   action: "cancelled" | "updated";
   summary: string;
+  extra?: string;
+  href?: string;
 }) {
   const to = env.ADMIN_NOTIFY_EMAIL;
+  const href = input.href || "/admin/bookings";
   return mail(
     to,
     `Booking ${input.action} — ${input.bookingReference}`,
@@ -1048,15 +1083,17 @@ export async function sendAdminBookingChangedEmail(input: {
       `A booking has been ${input.action}.`,
       `Reference: ${input.bookingReference}`,
       `What changed: ${input.summary}`,
-      `Admin: ${siteUrl("/admin/bookings")}`,
-    ],
+      input.extra || "",
+      `Admin: ${siteUrl(href)}`,
+    ].filter(Boolean),
     `<p>Hi Gregory,</p>
      <p>A booking has been <strong>${escapeHtml(input.action)}</strong>.</p>
      <ul>
        <li><strong>Reference:</strong> ${escapeHtml(input.bookingReference)}</li>
        <li><strong>What changed:</strong> ${escapeHtml(input.summary)}</li>
      </ul>
-     <p><a href="${siteUrl("/admin/bookings")}">View in admin</a></p>`,
+     ${input.extra ? `<p style="white-space:pre-wrap;">${escapeHtml(input.extra)}</p>` : ""}
+     <p><a href="${siteUrl(href)}">View in admin</a></p>`,
   );
 }
 
@@ -1124,5 +1161,63 @@ export async function sendAdminPaymentReceivedEmail(input: {
        <li><strong>Guest:</strong> ${escapeHtml(input.guestName)}</li>
      </ul>
      <p><a href="${siteUrl("/admin/bookings")}">Open dashboard</a></p>`,
+  );
+}
+
+export async function sendGuestRefundStatusEmail(input: {
+  to: string;
+  name: string;
+  bookingReference: string;
+  kind: "stay" | "taxi";
+  status: "reviewing" | "processed" | "rejected";
+  amount: number;
+  adminNote?: string;
+  payoutSummary?: string;
+}) {
+  const greeter = firstName(input.name);
+  const label = input.kind === "stay" ? "stay" : "taxi";
+  const subject =
+    input.status === "processed"
+      ? `Your Malfranza refund was processed — ${input.bookingReference}`
+      : input.status === "rejected"
+        ? `Update on your Malfranza refund — ${input.bookingReference}`
+        : `Your Malfranza refund is in review — ${input.bookingReference}`;
+
+  const statusLine =
+    input.status === "processed"
+      ? `We've marked your ${label} refund of ${money(input.amount)} as processed.`
+      : input.status === "rejected"
+        ? `We're unable to approve your ${label} refund request for ${input.bookingReference}.`
+        : `Your ${label} refund request for ${money(input.amount)} is now in review.`;
+
+  return mail(
+    input.to,
+    subject,
+    [
+      `Hi ${greeter},`,
+      "",
+      statusLine,
+      `Booking reference: ${input.bookingReference}`,
+      input.payoutSummary ? `Payout details on file: ${input.payoutSummary}` : "",
+      input.adminNote ? `Note from Malfranza: ${input.adminNote}` : "",
+      input.status === "processed"
+        ? "Allow a little time for the funds to appear, depending on your payout method."
+        : "",
+      `Questions? Call ${PHONE}.`,
+    ].filter(Boolean),
+    `<p>Hi ${escapeHtml(greeter)},</p>
+     <p>${escapeHtml(statusLine)}</p>
+     <ul>
+       <li><strong>Booking reference:</strong> ${escapeHtml(input.bookingReference)}</li>
+       <li><strong>Amount:</strong> ${money(input.amount)}</li>
+       ${input.payoutSummary ? `<li><strong>Payout details:</strong> ${escapeHtml(input.payoutSummary)}</li>` : ""}
+       ${input.adminNote ? `<li><strong>Note:</strong> ${escapeHtml(input.adminNote)}</li>` : ""}
+     </ul>
+     ${
+       input.status === "processed"
+         ? "<p style=\"font-size:13px;color:#4a5a5a;\">Allow a little time for the funds to appear, depending on your payout method.</p>"
+         : ""
+     }
+     <p>Questions? Call ${escapeHtml(PHONE)}.</p>`,
   );
 }

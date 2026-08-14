@@ -6,6 +6,7 @@ import {
   getAdminTaxiBookings,
   getAdminTaxiSettings,
   patchTaxiBookingStatus,
+  postAdminTaxiBooking,
   postAssignTaxiDriver,
   putAdminTaxiSettings,
 } from "./admin-taxi.controller.js";
@@ -16,6 +17,7 @@ adminTaxiRouter.use(authenticateAdmin);
 adminTaxiRouter.use(requireRole("admin", "staff"));
 
 adminTaxiRouter.get("/", getAdminTaxiBookings);
+adminTaxiRouter.post("/", postAdminTaxiBooking);
 adminTaxiRouter.get("/settings", getAdminTaxiSettings);
 adminTaxiRouter.put("/settings", requireRole("admin"), putAdminTaxiSettings);
 adminTaxiRouter.get("/:id", getAdminTaxiBooking);

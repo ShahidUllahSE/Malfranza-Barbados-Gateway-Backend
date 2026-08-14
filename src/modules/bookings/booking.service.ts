@@ -12,12 +12,21 @@ import {
 import {
   AGENCY_COMMISSION_RATE,
 } from "../agencies/agency.model.js";
+import { getDefaultCommissionRate } from "../agencies/agency-settings.service.js";
 import { findActiveAgencyByCode } from "../agencies/agency.service.js";
 import {
   sendAdminBookingChangedEmail,
   sendStayStatusEmail,
 } from "../notifications/email.service.js";
+import { createAdminNotification } from "../notifications/admin-notification.service.js";
+import { createUserNotification } from "../notifications/user-notification.service.js";
 import { Booking, BookingLock, type BookingRecord } from "./booking.model.js";
+import {
+  evaluateCancellation,
+  formatPayoutSummary,
+  type GuestCancelBookingInput,
+  type GuestRefundRequestInput,
+} from "./cancellation.js";
 import type {
   AdminBookingListQuery,
   AvailabilityQuery,
@@ -378,13 +387,14 @@ export async function createBooking(input: CreateBookingInput, userId?: string) 
         if (!agency) {
           throw new AppError(400, "Invalid or inactive travel agency code");
         }
-        const rate = Number(agency.commissionRate ?? AGENCY_COMMISSION_RATE);
+        const fallbackRate = await getDefaultCommissionRate();
+        const rate = Number(agency.commissionRate ?? fallbackRate ?? AGENCY_COMMISSION_RATE);
         agencyAttribution = {
           agencyId: agency._id as Types.ObjectId,
           agencyCode: agency.agencyCode,
           agencyName: agency.agencyName,
           commissionRate: rate,
-          // 10% of stay (room nights) only — taxi is excluded.
+          // Commission on stay (room nights) only — taxi is excluded.
           commissionAmount: money(staySubtotalAmount * rate),
         };
       }
@@ -411,6 +421,7 @@ export async function createBooking(input: CreateBookingInput, userId?: string) 
         totalAmount,
         bookingReference: generateBookingReference(),
         userId: userId ? new Types.ObjectId(userId) : undefined,
+        status: input.status === "confirmed" ? "confirmed" : "pending",
         paymentStatus: input.paymentStatus ?? "unpaid",
         paymentReference: input.paymentReference,
         taxi: input.taxi
@@ -596,4 +607,182 @@ export async function updateBookingPayment(
 
 export async function cancelBooking(id: string) {
   return updateBookingStatus(id, "cancelled");
+}
+
+export async function cancelUserStayBooking(
+  userId: string,
+  reference: string,
+  input: GuestCancelBookingInput,
+) {
+  const booking = await Booking.findOne({
+    userId,
+    bookingReference: reference.trim().toUpperCase(),
+  });
+  if (!booking) throw new AppError(404, "Booking not found");
+
+  const preview = evaluateCancellation({
+    eventDate: booking.checkIn,
+    paymentStatus: booking.paymentStatus,
+    amount: Number(booking.totalAmount),
+    status: booking.status,
+    kind: "stay",
+  });
+
+  if (!preview.allowed) {
+    throw new AppError(
+      409,
+      booking.status === "cancelled"
+        ? "This booking is already cancelled"
+        : "This booking can no longer be cancelled",
+    );
+  }
+
+  booking.status = "cancelled";
+  booking.cancelledAt = new Date();
+  booking.cancelledBy = "guest";
+  booking.cancellationReason = input.reason?.trim() || undefined;
+  booking.refundPercent = preview.refundPercent;
+  booking.refundAmount = preview.refundAmount;
+  booking.refundStatus = preview.refundEligible ? "eligible" : "none";
+  await booking.save();
+
+  const checkIn = String(booking.checkIn).slice(0, 10);
+  const checkOut = String(booking.checkOut).slice(0, 10);
+  const refundNote = preview.refundEligible
+    ? `You are eligible for a 50% refund of $${preview.refundAmount.toFixed(2)}. Open My Bookings and submit a refund request with your payout details. Our team will process it manually.`
+    : "This cancellation is non-refundable under our 7-day policy.";
+
+  await sendStayStatusEmail({
+    to: booking.guestEmail,
+    name: booking.guestName,
+    bookingReference: booking.bookingReference,
+    status: "cancelled",
+    apartmentName: booking.apartmentName,
+    checkIn,
+    checkOut,
+    changeSummary: preview.refundEligible
+      ? `Cancelled by guest · eligible for 50% refund ($${preview.refundAmount.toFixed(2)})`
+      : "Cancelled by guest · no refund",
+    refundNote,
+  }).catch((error) => {
+    console.error("[email] Failed to send guest stay cancel email", error);
+  });
+
+  await sendAdminBookingChangedEmail({
+    bookingReference: booking.bookingReference,
+    action: "cancelled",
+    summary: `${booking.apartmentName}, ${checkIn} → ${checkOut} · Guest ${booking.guestName} · ${
+      preview.refundEligible
+        ? `eligible for 50% refund $${preview.refundAmount.toFixed(2)} (awaiting guest request)`
+        : "no refund"
+    }`,
+    extra: [
+      preview.refundEligible
+        ? `Refund: 50% · $${preview.refundAmount.toFixed(2)} · guest can submit payout details`
+        : "Refund: none",
+      input.reason ? `Reason: ${input.reason}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    href: preview.refundEligible ? "/admin/refunds" : "/admin/bookings",
+  }).catch((error) => {
+    console.error("[email] Failed to send admin stay cancel alert", error);
+  });
+
+  await createAdminNotification({
+    type: "stay_booking",
+    title: preview.refundEligible
+      ? "Guest cancelled — refund eligible"
+      : "Guest cancelled stay — no refund",
+    body: `${booking.guestName} · ${booking.bookingReference} · ${checkIn} → ${checkOut}${
+      preview.refundEligible ? ` · $${preview.refundAmount.toFixed(2)}` : ""
+    }`,
+    href: preview.refundEligible ? "/admin/refunds" : "/admin/bookings",
+    entityId: String(booking._id),
+  }).catch((error) => {
+    console.error("[notify] Failed to create admin stay cancel notification", error);
+  });
+
+  if (booking.userId) {
+    await createUserNotification({
+      userId: String(booking.userId),
+      type: "stay",
+      title: "Stay booking cancelled",
+      body: preview.refundEligible
+        ? `${booking.apartmentName} cancelled. Submit your refund request (50% · $${preview.refundAmount.toFixed(2)}) from My Bookings.`
+        : `${booking.apartmentName} cancelled. No refund applies.`,
+      href: `/my-bookings/${encodeURIComponent(booking.bookingReference)}`,
+      entityId: String(booking._id),
+    }).catch((error) => {
+      console.error("[notify] Failed to create guest stay cancel notification", error);
+    });
+  }
+
+  return booking.toObject();
+}
+
+export async function submitStayRefundRequest(
+  userId: string,
+  reference: string,
+  input: GuestRefundRequestInput,
+) {
+  const booking = await Booking.findOne({
+    userId,
+    bookingReference: reference.trim().toUpperCase(),
+  });
+  if (!booking) throw new AppError(404, "Booking not found");
+  if (booking.status !== "cancelled") {
+    throw new AppError(409, "Cancel the booking before requesting a refund");
+  }
+  if (Number(booking.refundPercent) <= 0 || Number(booking.refundAmount) <= 0) {
+    throw new AppError(400, "This cancellation is not eligible for a refund");
+  }
+  if (["requested", "reviewing", "processed"].includes(String(booking.refundStatus))) {
+    throw new AppError(409, "A refund request is already in progress for this booking");
+  }
+  if (booking.refundStatus === "rejected") {
+    throw new AppError(409, "This refund was rejected. Contact support if you need help.");
+  }
+
+  booking.refundPayout = input.payout;
+  booking.refundStatus = "requested";
+  booking.refundRequestedAt = new Date();
+  booking.refundAdminNote = undefined;
+  await booking.save();
+
+  const payoutLine = formatPayoutSummary(input.payout);
+  await sendAdminBookingChangedEmail({
+    bookingReference: booking.bookingReference,
+    action: "updated",
+    summary: `Refund request submitted · ${booking.apartmentName} · $${Number(booking.refundAmount).toFixed(2)}`,
+    extra: [`Payout: ${payoutLine}`, "Open Admin → Refunds to review and process."].join("\n"),
+    href: "/admin/refunds",
+  }).catch((error) => {
+    console.error("[email] Failed to send admin refund request alert", error);
+  });
+
+  await createAdminNotification({
+    type: "refund_request",
+    title: "New stay refund request",
+    body: `${booking.guestName} · ${booking.bookingReference} · $${Number(booking.refundAmount).toFixed(2)} · ${payoutLine}`,
+    href: "/admin/refunds",
+    entityId: String(booking._id),
+  }).catch((error) => {
+    console.error("[notify] Failed to create admin refund notification", error);
+  });
+
+  if (booking.userId) {
+    await createUserNotification({
+      userId: String(booking.userId),
+      type: "stay",
+      title: "Refund request submitted",
+      body: `We received your request for $${Number(booking.refundAmount).toFixed(2)}. Admin will process it manually.`,
+      href: `/my-bookings/${encodeURIComponent(booking.bookingReference)}`,
+      entityId: String(booking._id),
+    }).catch((error) => {
+      console.error("[notify] Failed to create guest refund notification", error);
+    });
+  }
+
+  return booking.toObject();
 }

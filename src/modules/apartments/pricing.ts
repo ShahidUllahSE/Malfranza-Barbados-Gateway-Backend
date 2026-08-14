@@ -1,23 +1,26 @@
 /**
  * Seasonal + room-type pricing (USD / room / night).
+ * Amplifi AI · Final Room Rates (Aug 2026) — PayPal fee already included.
+ * Keep in sync with frontend `src/lib/pricing.ts`.
  *
  * | Room Type   | Out of Season | Summer / Peak |
- * | One-bedroom | $90           | $95           |
- * | Two-bedroom | $100          | $110          |
+ * | One-bedroom | $95           | $100          |
+ * | Two-bedroom | $105          | $115          |
  *
- * Peak covers Barbados high season (mid-Dec → mid-Apr) and summer (Jul–Aug).
- * Floor is $90; two-bedroom is always above one-bedroom.
+ * Peak (provisional until confirmed): mid-Dec → mid-Apr + Jul–Aug.
+ * Floor is $95; two-bedroom is always above one-bedroom.
+ * No separate PayPal fee at checkout — built into these rates.
  */
 
 export type PricedRoomType = "one-bedroom" | "two-bedroom";
 
 const RATES: Record<PricedRoomType, { off: number; peak: number }> = {
-  "one-bedroom": { off: 90, peak: 95 },
-  "two-bedroom": { off: 100, peak: 110 },
+  "one-bedroom": { off: 95, peak: 100 },
+  "two-bedroom": { off: 105, peak: 115 },
 };
 
 /** Absolute lowest publishable rate on the platform. */
-export const PLATFORM_MIN_NIGHTLY = 90;
+export const PLATFORM_MIN_NIGHTLY = 95;
 
 export function isPeakSeason(isoDate: string): boolean {
   const d = new Date(`${isoDate.slice(0, 10)}T00:00:00.000Z`);
@@ -81,3 +84,8 @@ export function averageNightly(
   const total = staySubtotal(roomType, checkIn, checkOut);
   return Math.round((total / nights.length) * 100) / 100;
 }
+
+export const RATE_TABLE = {
+  "one-bedroom": { off: 95, peak: 100 },
+  "two-bedroom": { off: 105, peak: 115 },
+} as const;

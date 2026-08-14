@@ -226,6 +226,7 @@ export const postBooking: RequestHandler = async (request, response) => {
         checkOut,
         bookingValue: staySubtotal,
         commissionAmount: Number(booking.commissionAmount ?? 0),
+        commissionRate: Number(booking.commissionRate ?? agency.commissionRate ?? 0.1),
       }).catch((error) => {
         console.error("[email] Failed to send agency new booking email", error);
       });

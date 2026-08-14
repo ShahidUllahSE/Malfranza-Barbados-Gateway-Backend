@@ -1,4 +1,7 @@
 import type { RequestHandler } from "express";
+import { cancelUserStayBooking, submitStayRefundRequest } from "../bookings/booking.service.js";
+import { guestCancelBookingSchema, guestRefundRequestSchema } from "../bookings/cancellation.js";
+import { cancelUserTaxiBooking, submitTaxiRefundRequest } from "../taxi/taxi.service.js";
 import {
   getUserBookingByReference,
   getUserProfile,
@@ -95,6 +98,46 @@ export const getMyBookingByReference: RequestHandler = async (request, response)
 export const getMyTaxiBookings: RequestHandler = async (request, response) => {
   const items = await listUserTaxiBookings(request.user!.id);
   response.status(200).json({ success: true, data: { items } });
+};
+
+export const postCancelMyBooking: RequestHandler = async (request, response) => {
+  const input = guestCancelBookingSchema.parse(request.body ?? {});
+  const booking = await cancelUserStayBooking(
+    request.user!.id,
+    String(request.params.reference ?? ""),
+    input,
+  );
+  response.status(200).json({ success: true, data: booking });
+};
+
+export const postCancelMyTaxiBooking: RequestHandler = async (request, response) => {
+  const input = guestCancelBookingSchema.parse(request.body ?? {});
+  const booking = await cancelUserTaxiBooking(
+    request.user!.id,
+    String(request.params.reference ?? ""),
+    input,
+  );
+  response.status(200).json({ success: true, data: booking });
+};
+
+export const postMyStayRefundRequest: RequestHandler = async (request, response) => {
+  const input = guestRefundRequestSchema.parse(request.body ?? {});
+  const booking = await submitStayRefundRequest(
+    request.user!.id,
+    String(request.params.reference ?? ""),
+    input,
+  );
+  response.status(200).json({ success: true, data: booking });
+};
+
+export const postMyTaxiRefundRequest: RequestHandler = async (request, response) => {
+  const input = guestRefundRequestSchema.parse(request.body ?? {});
+  const booking = await submitTaxiRefundRequest(
+    request.user!.id,
+    String(request.params.reference ?? ""),
+    input,
+  );
+  response.status(200).json({ success: true, data: booking });
 };
 
 export const getMyNotifications: RequestHandler = async (request, response) => {

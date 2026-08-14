@@ -2,32 +2,40 @@ import { TaxiSettings } from "./taxi-settings.model.js";
 import type { UpdateTaxiSettingsInput } from "./taxi.validation.js";
 
 export type TaxiFareSettings = {
+  /** USD per km for 1–4 guests (standard car). */
   fareFor1to4: number;
+  /** USD per km for 5–7 guests (XL). */
   fareFor5to7: number;
+  /** USD per km for 8–10 guests. */
   fareFor8to10: number;
   /** Aliases kept so older admin/UI clients still work. */
   fareFor1Guest: number;
   fareFor2Guests: number;
   fareFor3Guests: number;
   fareFor4PlusGuests: number;
+  /** Legacy flat add-on — kept for schema compatibility; fare is tier $/km × distance. */
   perKmUsd: number;
   minimumFareUsd: number;
 };
 
-/** Capacity tiers from the client spec. Exact sheet TBD — demo-safe USD amounts. */
+/** Client rates: $/km by capacity tier. */
 export const REGULATED_TAXI_FARES: TaxiFareSettings = {
-  fareFor1to4: 25,
-  fareFor5to7: 35,
-  fareFor8to10: 45,
-  fareFor1Guest: 25,
-  fareFor2Guests: 25,
-  fareFor3Guests: 35,
-  fareFor4PlusGuests: 45,
+  fareFor1to4: 1.62,
+  fareFor5to7: 2.4,
+  fareFor8to10: 4,
+  fareFor1Guest: 1.62,
+  fareFor2Guests: 1.62,
+  fareFor3Guests: 2.4,
+  fareFor4PlusGuests: 4,
   perKmUsd: 0,
-  minimumFareUsd: 25,
+  minimumFareUsd: 5,
 };
 
 const DEFAULTS: TaxiFareSettings = REGULATED_TAXI_FARES;
+
+function money(value: number): number {
+  return Math.round(value * 100) / 100;
+}
 
 function toSettings(doc: {
   fareFor1to4?: number;
@@ -40,9 +48,9 @@ function toSettings(doc: {
   perKmUsd: number;
   minimumFareUsd: number;
 }): TaxiFareSettings {
-  const fareFor1to4 = Number(doc.fareFor1to4 ?? doc.fareFor1Guest ?? 25);
-  const fareFor5to7 = Number(doc.fareFor5to7 ?? doc.fareFor3Guests ?? 35);
-  const fareFor8to10 = Number(doc.fareFor8to10 ?? doc.fareFor4PlusGuests ?? 45);
+  const fareFor1to4 = Number(doc.fareFor1to4 ?? doc.fareFor1Guest ?? 1.62);
+  const fareFor5to7 = Number(doc.fareFor5to7 ?? doc.fareFor3Guests ?? 2.4);
+  const fareFor8to10 = Number(doc.fareFor8to10 ?? doc.fareFor4PlusGuests ?? 4);
   return {
     fareFor1to4,
     fareFor5to7,
@@ -52,14 +60,14 @@ function toSettings(doc: {
     fareFor3Guests: fareFor5to7,
     fareFor4PlusGuests: fareFor8to10,
     perKmUsd: Number(doc.perKmUsd ?? 0),
-    minimumFareUsd: Number(doc.minimumFareUsd ?? 25),
+    minimumFareUsd: Number(doc.minimumFareUsd ?? 5),
   };
 }
 
 function persistableFromInput(input: UpdateTaxiSettingsInput) {
-  const fareFor1to4 = input.fareFor1to4 ?? input.fareFor1Guest ?? 25;
-  const fareFor5to7 = input.fareFor5to7 ?? input.fareFor3Guests ?? 35;
-  const fareFor8to10 = input.fareFor8to10 ?? input.fareFor4PlusGuests ?? 45;
+  const fareFor1to4 = input.fareFor1to4 ?? input.fareFor1Guest ?? 1.62;
+  const fareFor5to7 = input.fareFor5to7 ?? input.fareFor3Guests ?? 2.4;
+  const fareFor8to10 = input.fareFor8to10 ?? input.fareFor4PlusGuests ?? 4;
   return {
     fareFor1to4,
     fareFor5to7,
@@ -68,7 +76,7 @@ function persistableFromInput(input: UpdateTaxiSettingsInput) {
     fareFor2Guests: fareFor1to4,
     fareFor3Guests: fareFor5to7,
     fareFor4PlusGuests: fareFor8to10,
-    perKmUsd: input.perKmUsd,
+    perKmUsd: input.perKmUsd ?? 0,
     minimumFareUsd: input.minimumFareUsd,
   };
 }
@@ -91,6 +99,7 @@ export async function updateTaxiSettings(input: UpdateTaxiSettingsInput): Promis
   return toSettings(updated!);
 }
 
+/** Per-km rate for the passenger tier. */
 export function guestFareFromSettings(settings: TaxiFareSettings, passengers: number): number {
   if (passengers <= 4) return settings.fareFor1to4;
   if (passengers <= 7) return settings.fareFor5to7;
@@ -98,15 +107,14 @@ export function guestFareFromSettings(settings: TaxiFareSettings, passengers: nu
 }
 
 /**
- * Guest-bracket fare + optional per-km charge, floored by minimum.
+ * Distance × tier $/km, floored by minimum.
  */
 export function calculateFareFromSettings(
   settings: TaxiFareSettings,
   distanceKm: number,
   passengers: number,
 ): number {
-  const guestFare = guestFareFromSettings(settings, passengers);
-  const distanceCharge = Math.max(0, distanceKm) * settings.perKmUsd;
-  const total = guestFare + distanceCharge;
-  return Math.max(settings.minimumFareUsd, Math.round(total));
+  const perKm = guestFareFromSettings(settings, passengers);
+  const total = Math.max(0, distanceKm) * perKm;
+  return Math.max(settings.minimumFareUsd, money(total));
 }

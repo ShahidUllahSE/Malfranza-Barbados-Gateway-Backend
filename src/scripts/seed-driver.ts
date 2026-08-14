@@ -14,12 +14,12 @@ const FLEET = [
     passengerCapacity: 4,
   },
   {
-    name: "Malfranza Van",
+    name: "Malfranza XL",
     email: "driver10@malfranza.com",
     password: "driver@321",
     phone: "+1 246 555 0210",
-    vehicleLabel: "12-seater van",
-    passengerCapacity: 12,
+    vehicleLabel: "XL — 7 seats",
+    passengerCapacity: 7,
   },
 ] as const;
 

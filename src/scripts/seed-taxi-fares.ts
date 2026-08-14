@@ -11,11 +11,10 @@ async function main() {
     { $set: { key: "default", ...REGULATED_TAXI_FARES } },
     { new: true, upsert: true, runValidators: true },
   );
-  console.log("Taxi fares set:", {
-    "1–4 guests": `$${updated?.fareFor1to4 ?? updated?.fareFor1Guest}`,
-    "5–7 guests": `$${updated?.fareFor5to7 ?? updated?.fareFor3Guests}`,
-    "8–10 guests": `$${updated?.fareFor8to10 ?? updated?.fareFor4PlusGuests}`,
-    perKm: `$${updated?.perKmUsd}`,
+  console.log("Taxi rates ($/km) set:", {
+    "1–4 guests": `$${updated?.fareFor1to4 ?? updated?.fareFor1Guest}/km`,
+    "5–7 guests XL": `$${updated?.fareFor5to7 ?? updated?.fareFor3Guests}/km`,
+    "8–10 guests": `$${updated?.fareFor8to10 ?? updated?.fareFor4PlusGuests}/km`,
     minimum: `$${updated?.minimumFareUsd}`,
   });
   await mongoose.disconnect();

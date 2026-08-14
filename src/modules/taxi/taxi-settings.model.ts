@@ -2,21 +2,21 @@ import { Schema, model, type InferSchemaType } from "mongoose";
 
 /**
  * Singleton taxi pricing document.
- * Fares are primarily by guest count; distance is an optional add-on.
+ * Rates are USD per km by guest tier; total = distanceKm × rate (min floor).
  */
 const taxiSettingsSchema = new Schema(
   {
     key: { type: String, required: true, unique: true, default: "default" },
-    fareFor1to4: { type: Number, min: 0, default: 25 },
-    fareFor5to7: { type: Number, min: 0, default: 35 },
-    fareFor8to10: { type: Number, min: 0, default: 45 },
-    fareFor1Guest: { type: Number, required: true, min: 0, default: 25 },
-    fareFor2Guests: { type: Number, required: true, min: 0, default: 25 },
-    fareFor3Guests: { type: Number, required: true, min: 0, default: 35 },
-    fareFor4PlusGuests: { type: Number, required: true, min: 0, default: 45 },
-    /** Added on top of the guest fare for every km. 0 = flat guest-only pricing. */
+    fareFor1to4: { type: Number, min: 0, default: 1.62 },
+    fareFor5to7: { type: Number, min: 0, default: 2.4 },
+    fareFor8to10: { type: Number, min: 0, default: 4 },
+    fareFor1Guest: { type: Number, required: true, min: 0, default: 1.62 },
+    fareFor2Guests: { type: Number, required: true, min: 0, default: 1.62 },
+    fareFor3Guests: { type: Number, required: true, min: 0, default: 2.4 },
+    fareFor4PlusGuests: { type: Number, required: true, min: 0, default: 4 },
+    /** Legacy field — fare is tier $/km × distance; kept for compatibility. */
     perKmUsd: { type: Number, required: true, min: 0, default: 0 },
-    minimumFareUsd: { type: Number, required: true, min: 0, default: 25 },
+    minimumFareUsd: { type: Number, required: true, min: 0, default: 5 },
   },
   {
     timestamps: true,

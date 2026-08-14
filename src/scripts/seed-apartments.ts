@@ -13,6 +13,7 @@ import { Apartment } from "../modules/apartments/apartment.model.js";
  */
 
 const SHARED_AMENITIES = [
+  "High Speed Starlink Internet",
   "Air Conditioning",
   "Smart TV",
   "Fridge",
@@ -23,7 +24,6 @@ const SHARED_AMENITIES = [
   "Toaster",
   "Iron",
   "Fire Extinguisher",
-  "High Speed Starlink Internet",
 ] as const;
 
 /** 1-BR rooms: washer yes, dryer no */
@@ -106,9 +106,9 @@ const apartments = [
     slug: "apartment-a-and-b",
     subtitle: "Room A & B",
     description:
-      "Sunset Suite — two-bedroom residence (Room A & B combined) at Malfranza, Oistins. Bright space for groups, with full kitchen and Starlink internet.",
+      "Sunset Suite — Room A and Room B at Malfranza, Oistins. Book either room on its own, or both together. Each unit has its own space; Starlink internet throughout.",
     type: "two-bedroom" as const,
-    pricePerNight: catalogFromRate("two-bedroom"),
+    pricePerNight: catalogFromRate("one-bedroom"),
     maxGuests: 4,
     bedrooms: 2,
     bathrooms: 2,
@@ -116,7 +116,26 @@ const apartments = [
     amenities: [...AMENITIES_2BR],
     isActive: true,
     unitsExclusive: false,
-    units: [],
+    units: [
+      {
+        name: "Room A",
+        description: "Independently bookable room in Sunset Suite — one bedroom, private bathroom.",
+        bedrooms: 1,
+        bathrooms: 1,
+        maxGuests: 2,
+        pricePerNight: catalogFromRate("one-bedroom"),
+        isActive: true,
+      },
+      {
+        name: "Room B",
+        description: "Independently bookable room in Sunset Suite — one bedroom, private bathroom.",
+        bedrooms: 1,
+        bathrooms: 1,
+        maxGuests: 2,
+        pricePerNight: catalogFromRate("one-bedroom"),
+        isActive: true,
+      },
+    ],
   },
 ];
 

@@ -5,6 +5,7 @@ export const ADMIN_NOTIFICATION_TYPES = [
   "stay_booking",
   "enquiry",
   "agency_signup",
+  "refund_request",
 ] as const;
 
 export type AdminNotificationType = (typeof ADMIN_NOTIFICATION_TYPES)[number];

@@ -5,6 +5,7 @@ import { Driver } from "../drivers/driver.model.js";
 import { createAdminNotification } from "../notifications/admin-notification.service.js";
 import { createUserNotification } from "../notifications/user-notification.service.js";
 import {
+  sendAdminBookingChangedEmail,
   sendAdminNewTaxiBookingEmail,
   sendDriverTripCancelledEmail,
   sendDriverTripUpdatedEmail,
@@ -12,6 +13,12 @@ import {
   sendTaxiConfirmationEmail,
   sendTaxiStatusEmail,
 } from "../notifications/email.service.js";
+import {
+  evaluateCancellation,
+  formatPayoutSummary,
+  type GuestCancelBookingInput,
+  type GuestRefundRequestInput,
+} from "../bookings/cancellation.js";
 import { notifyDriverOfAssignment } from "./driver-notify.js";
 import { TaxiBooking, type TaxiBookingRecord } from "./taxi.model.js";
 import {
@@ -19,7 +26,9 @@ import {
   getTaxiSettings,
   guestFareFromSettings,
 } from "./taxi-settings.service.js";
+import { fetchDrivingDistance } from "./google-routes.js";
 import type {
+  AdminCreateTaxiBookingInput,
   AdminTaxiListQuery,
   CreateTaxiBookingInput,
   FareEstimateInput,
@@ -34,34 +43,76 @@ function generateReference(): string {
   return `MFZ-TAXI-${new Date().getUTCFullYear()}-${randomBytes(4).toString("hex").toUpperCase()}`;
 }
 
-function demoFareEstimate(
-  settings: Awaited<ReturnType<typeof getTaxiSettings>>,
-  passengers: number,
-) {
-  const distanceKm = 12;
-  return {
-    distanceKm,
-    durationMinutes: 25,
-    estimatedFare: calculateFareFromSettings(settings, distanceKm, passengers),
-    currency: "USD" as const,
-    estimated: true as const,
-    guestFare: guestFareFromSettings(settings, passengers),
-    perKmUsd: settings.perKmUsd,
-  };
+async function resolveRouteDistance(input: {
+  pickupLocation?: string;
+  dropoffLocation?: string;
+  pickupLat?: number;
+  pickupLng?: number;
+  dropoffLat?: number;
+  dropoffLng?: number;
+}) {
+  const pickup = input.pickupLocation?.trim();
+  const dropoff = input.dropoffLocation?.trim();
+  if ((!pickup || pickup.length < 2) && (input.pickupLat == null || input.pickupLng == null)) {
+    throw new AppError(400, "Enter a pickup location");
+  }
+  if ((!dropoff || dropoff.length < 2) && (input.dropoffLat == null || input.dropoffLng == null)) {
+    throw new AppError(400, "Enter a drop-off location");
+  }
+
+  return fetchDrivingDistance(
+    {
+      address: pickup,
+      lat: input.pickupLat,
+      lng: input.pickupLng,
+    },
+    {
+      address: dropoff,
+      lat: input.dropoffLat,
+      lng: input.dropoffLng,
+    },
+  );
 }
 
 export async function estimateFare(input: FareEstimateInput) {
-  // Demo: never call Google Routes. Any typed/map location is accepted.
-  return demoFareEstimate(await getTaxiSettings(), input.passengers);
+  const settings = await getTaxiSettings();
+  const route = await resolveRouteDistance(input);
+  const estimatedFare = calculateFareFromSettings(settings, route.distanceKm, input.passengers);
+  return {
+    distanceKm: route.distanceKm,
+    durationMinutes: route.durationMinutes,
+    estimatedFare,
+    currency: "USD" as const,
+    estimated: false as const,
+    guestFare: guestFareFromSettings(settings, input.passengers),
+    perKmUsd: guestFareFromSettings(settings, input.passengers),
+  };
 }
 
 export async function listPublicVehicles(input: PublicVehiclesQuery) {
   const settings = await getTaxiSettings();
   const passengers = input.passengers;
-  const estimatedFare = Math.max(
-    settings.minimumFareUsd,
-    guestFareFromSettings(settings, passengers),
-  );
+
+  let distanceKm: number | null = null;
+  let durationMinutes: number | null = null;
+  let estimatedFare = settings.minimumFareUsd;
+
+  if (
+    (input.pickupLocation && input.dropoffLocation) ||
+    (input.pickupLat != null &&
+      input.pickupLng != null &&
+      input.dropoffLat != null &&
+      input.dropoffLng != null)
+  ) {
+    try {
+      const route = await resolveRouteDistance(input);
+      distanceKm = route.distanceKm;
+      durationMinutes = route.durationMinutes;
+      estimatedFare = calculateFareFromSettings(settings, route.distanceKm, passengers);
+    } catch (error) {
+      console.warn("[taxi] Vehicle list continuing without live distance", error);
+    }
+  }
 
   const busySlot =
     input.pickupDate && input.pickupTime
@@ -103,8 +154,8 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
     fare: estimatedFare,
     guestFare,
     passengers,
-    distanceKm: null,
-    durationMinutes: null,
+    distanceKm,
+    durationMinutes,
     currency: "USD" as const,
     vehicles: drivers
       .map((d) => {
@@ -127,15 +178,34 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
   };
 }
 
-export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: string) {
-  if (input.paymentStatus !== "paid" || !input.paymentReference?.trim()) {
+export async function createTaxiBooking(
+  input: CreateTaxiBookingInput | AdminCreateTaxiBookingInput,
+  userId?: string,
+  options?: { notifyGuest?: boolean; source?: "public" | "admin" },
+) {
+  const paymentStatus = input.paymentStatus ?? "unpaid";
+  const paymentReference = input.paymentReference?.trim();
+  if (options?.source !== "admin" && (paymentStatus !== "paid" || !paymentReference)) {
+    throw new AppError(400, "Pay with PayPal before booking this taxi ride");
+  }
+  if (paymentStatus === "paid" && !paymentReference && options?.source !== "admin") {
     throw new AppError(400, "Pay with PayPal before booking this taxi ride");
   }
 
   const estimate = await estimateFare(input);
   const pickupDate = toUtcDate(input.pickupDate);
 
-  const { driverId: requestedDriverId, paymentMethod, ...bookingFields } = input;
+  const {
+    driverId: requestedDriverId,
+    paymentMethod,
+    notifyGuest: _notifyGuest,
+    status: requestedStatus,
+    pickupLat: _pickupLat,
+    pickupLng: _pickupLng,
+    dropoffLat: _dropoffLat,
+    dropoffLng: _dropoffLng,
+    ...bookingFields
+  } = input as CreateTaxiBookingInput & AdminCreateTaxiBookingInput;
 
   if (requestedDriverId) {
     const busy = await busyDriverIdsForSlot(pickupDate, input.pickupTime);
@@ -157,10 +227,12 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
     distanceKm: estimate.distanceKm,
     durationMinutes: estimate.durationMinutes,
     estimatedFare: estimate.estimatedFare,
-    paymentStatus: "paid",
-    paymentReference: input.paymentReference.trim(),
-    paymentMethod: paymentMethod?.trim() || "PayPal",
-    status: "pending",
+    paymentStatus,
+    paymentReference:
+      paymentStatus === "paid" ? paymentReference || "OFFLINE" : paymentReference,
+    paymentMethod:
+      paymentMethod?.trim() || (paymentStatus === "paid" ? (options?.source === "admin" ? "Offline" : "PayPal") : "Offline"),
+    status: requestedStatus === "confirmed" ? "confirmed" : "pending",
     ...(requestedDriverId ? { driverId: requestedDriverId } : {}),
   });
 
@@ -169,56 +241,71 @@ export async function createTaxiBooking(input: CreateTaxiBookingInput, userId?: 
   const flightNumber = flightMatch?.[1];
   const taxiId = String(booking._id);
 
+  const notifyGuest = options?.notifyGuest !== false;
+  const fromAdmin = options?.source === "admin";
+
   void Promise.allSettled([
-    sendTaxiConfirmationEmail({
-      to: booking.customerEmail,
-      name: booking.customerName,
-      bookingReference: booking.bookingReference,
-      serviceType: booking.serviceType,
-      pickupLocation: booking.pickupLocation,
-      dropoffLocation: booking.dropoffLocation,
-      pickupDate: pickupDateIso,
-      pickupTime: booking.pickupTime,
-      estimatedFare: Number(booking.estimatedFare),
-      currency: "USD",
-      passengers: Number(booking.passengers),
-      flightNumber: flightNumber ?? undefined,
-      driverName: null,
-      driverPhone: null,
-      vehicleLabel: null,
-      pending: true,
-    }),
-    sendPaymentReceiptEmail({
-      to: booking.customerEmail,
-      name: booking.customerName,
-      bookingReference: booking.bookingReference,
-      totalAmount: Number(booking.estimatedFare),
-      paymentMethod: booking.paymentMethod || "PayPal",
-      stayLabel: undefined,
-      taxiAmount: Number(booking.estimatedFare),
-    }),
-    sendAdminNewTaxiBookingEmail({
-      bookingReference: booking.bookingReference,
-      customerName: booking.customerName,
-      customerEmail: booking.customerEmail,
-      customerPhone: booking.customerPhone,
-      serviceType: booking.serviceType,
-      pickupLocation: booking.pickupLocation,
-      dropoffLocation: booking.dropoffLocation,
-      pickupDate: pickupDateIso,
-      pickupTime: booking.pickupTime,
-      estimatedFare: Number(booking.estimatedFare),
-      passengers: Number(booking.passengers),
-      driverName: null,
-      vehicleLabel: null,
-    }),
-    createAdminNotification({
-      type: "taxi_booking",
-      title: "New taxi booking — pending",
-      body: `${booking.customerName} · ${pickupDateIso} ${booking.pickupTime} · paid · ${booking.pickupLocation} → ${booking.dropoffLocation}`,
-      href: `/admin/taxi/${taxiId}`,
-      entityId: taxiId,
-    }),
+    ...(notifyGuest
+      ? [
+          sendTaxiConfirmationEmail({
+            to: booking.customerEmail,
+            name: booking.customerName,
+            bookingReference: booking.bookingReference,
+            serviceType: booking.serviceType,
+            pickupLocation: booking.pickupLocation,
+            dropoffLocation: booking.dropoffLocation,
+            pickupDate: pickupDateIso,
+            pickupTime: booking.pickupTime,
+            estimatedFare: Number(booking.estimatedFare),
+            currency: "USD",
+            passengers: Number(booking.passengers),
+            flightNumber: flightNumber ?? undefined,
+            driverName: null,
+            driverPhone: null,
+            vehicleLabel: null,
+            pending: booking.status === "pending",
+          }),
+        ]
+      : []),
+    ...(paymentStatus === "paid" && notifyGuest
+      ? [
+          sendPaymentReceiptEmail({
+            to: booking.customerEmail,
+            name: booking.customerName,
+            bookingReference: booking.bookingReference,
+            totalAmount: Number(booking.estimatedFare),
+            paymentMethod: booking.paymentMethod || "PayPal",
+            stayLabel: undefined,
+            taxiAmount: Number(booking.estimatedFare),
+          }),
+        ]
+      : []),
+    ...(!fromAdmin
+      ? [
+          sendAdminNewTaxiBookingEmail({
+            bookingReference: booking.bookingReference,
+            customerName: booking.customerName,
+            customerEmail: booking.customerEmail,
+            customerPhone: booking.customerPhone,
+            serviceType: booking.serviceType,
+            pickupLocation: booking.pickupLocation,
+            dropoffLocation: booking.dropoffLocation,
+            pickupDate: pickupDateIso,
+            pickupTime: booking.pickupTime,
+            estimatedFare: Number(booking.estimatedFare),
+            passengers: Number(booking.passengers),
+            driverName: null,
+            vehicleLabel: null,
+          }),
+          createAdminNotification({
+            type: "taxi_booking",
+            title: "New taxi booking — pending",
+            body: `${booking.customerName} · ${pickupDateIso} ${booking.pickupTime} · ${paymentStatus} · ${booking.pickupLocation} → ${booking.dropoffLocation}`,
+            href: `/admin/taxi/${taxiId}`,
+            entityId: taxiId,
+          }),
+        ]
+      : []),
   ]).then((results) => {
     for (const result of results) {
       if (result.status === "rejected") {
@@ -721,4 +808,195 @@ export async function updateDriverTaxiStatus(
 
 export async function cancelTaxiBooking(id: string) {
   return updateTaxiBookingStatus(id, "cancelled");
+}
+
+export async function cancelUserTaxiBooking(
+  userId: string,
+  reference: string,
+  input: GuestCancelBookingInput,
+) {
+  const booking = await TaxiBooking.findOne({
+    userId,
+    bookingReference: reference.trim().toUpperCase(),
+  }).populate("driverId", "name email phone vehicleLabel");
+  if (!booking) throw new AppError(404, "Taxi booking not found");
+
+  const preview = evaluateCancellation({
+    eventDate: booking.pickupDate,
+    paymentStatus: booking.paymentStatus,
+    amount: Number(booking.estimatedFare),
+    status: booking.status,
+    kind: "taxi",
+  });
+
+  if (!preview.allowed) {
+    throw new AppError(
+      409,
+      booking.status === "cancelled"
+        ? "This trip is already cancelled"
+        : "This trip can no longer be cancelled",
+    );
+  }
+
+  const driverDoc =
+    booking.driverId && typeof booking.driverId === "object"
+      ? (booking.driverId as { name?: string; email?: string })
+      : null;
+
+  booking.status = "cancelled";
+  booking.cancelledAt = new Date();
+  booking.cancelledBy = "guest";
+  booking.cancellationReason = input.reason?.trim() || undefined;
+  booking.refundPercent = preview.refundPercent;
+  booking.refundAmount = preview.refundAmount;
+  booking.refundStatus = preview.refundEligible ? "eligible" : "none";
+  await booking.save();
+
+  const pickupDateIso = String(booking.pickupDate).slice(0, 10);
+  const refundNote = preview.refundEligible
+    ? `You are eligible for a 50% refund of $${preview.refundAmount.toFixed(2)}. Open My Bookings and submit a refund request with your payout details. Our team will process it manually.`
+    : "This cancellation is non-refundable under our 7-day policy.";
+
+  await sendTaxiStatusEmail({
+    to: booking.customerEmail,
+    name: booking.customerName,
+    bookingReference: booking.bookingReference,
+    status: "cancelled",
+    pickupDate: pickupDateIso,
+    pickupTime: booking.pickupTime,
+    refundNote,
+  }).catch((error) => {
+    console.error("[email] Failed to send guest taxi cancel email", error);
+  });
+
+  if (driverDoc?.email && driverDoc.name) {
+    await sendDriverTripCancelledEmail({
+      to: String(driverDoc.email),
+      driverName: String(driverDoc.name),
+      pickupDate: pickupDateIso,
+      pickupTime: booking.pickupTime,
+      pickupLocation: booking.pickupLocation,
+      dropoffLocation: booking.dropoffLocation,
+    }).catch((error) => {
+      console.error("[email] Failed to send driver trip cancelled", error);
+    });
+  }
+
+  await sendAdminBookingChangedEmail({
+    bookingReference: booking.bookingReference,
+    action: "cancelled",
+    summary: `Taxi ${booking.serviceType} · ${pickupDateIso} ${booking.pickupTime} · Guest ${booking.customerName} · ${
+      preview.refundEligible
+        ? `eligible for 50% refund $${preview.refundAmount.toFixed(2)} (awaiting guest request)`
+        : "no refund"
+    }`,
+    extra: [
+      preview.refundEligible
+        ? `Refund: 50% · $${preview.refundAmount.toFixed(2)} · guest can submit payout details`
+        : "Refund: none",
+      input.reason ? `Reason: ${input.reason}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    href: preview.refundEligible ? "/admin/refunds" : `/admin/taxi/${String(booking._id)}`,
+  }).catch((error) => {
+    console.error("[email] Failed to send admin taxi cancel alert", error);
+  });
+
+  await createAdminNotification({
+    type: "taxi_booking",
+    title: preview.refundEligible
+      ? "Guest cancelled taxi — refund eligible"
+      : "Guest cancelled taxi — no refund",
+    body: `${booking.customerName} · ${booking.bookingReference} · ${pickupDateIso} ${booking.pickupTime}${
+      preview.refundEligible ? ` · $${preview.refundAmount.toFixed(2)}` : ""
+    }`,
+    href: preview.refundEligible ? "/admin/refunds" : `/admin/taxi/${String(booking._id)}`,
+    entityId: String(booking._id),
+  }).catch((error) => {
+    console.error("[notify] Failed to create admin taxi cancel notification", error);
+  });
+
+  if (booking.userId) {
+    await createUserNotification({
+      userId: String(booking.userId),
+      type: "taxi",
+      title: "Taxi booking cancelled",
+      body: preview.refundEligible
+        ? `Trip cancelled. Submit your refund request (50% · $${preview.refundAmount.toFixed(2)}) from My Bookings.`
+        : "Trip cancelled. No refund applies.",
+      href: "/my-bookings",
+      entityId: String(booking._id),
+    }).catch((error) => {
+      console.error("[notify] Failed to create guest taxi cancel notification", error);
+    });
+  }
+
+  return booking.toObject();
+}
+
+export async function submitTaxiRefundRequest(
+  userId: string,
+  reference: string,
+  input: GuestRefundRequestInput,
+) {
+  const booking = await TaxiBooking.findOne({
+    userId,
+    bookingReference: reference.trim().toUpperCase(),
+  });
+  if (!booking) throw new AppError(404, "Taxi booking not found");
+  if (booking.status !== "cancelled") {
+    throw new AppError(409, "Cancel the trip before requesting a refund");
+  }
+  if (Number(booking.refundPercent) <= 0 || Number(booking.refundAmount) <= 0) {
+    throw new AppError(400, "This cancellation is not eligible for a refund");
+  }
+  if (["requested", "reviewing", "processed"].includes(String(booking.refundStatus))) {
+    throw new AppError(409, "A refund request is already in progress for this trip");
+  }
+  if (booking.refundStatus === "rejected") {
+    throw new AppError(409, "This refund was rejected. Contact support if you need help.");
+  }
+
+  booking.refundPayout = input.payout;
+  booking.refundStatus = "requested";
+  booking.refundRequestedAt = new Date();
+  booking.refundAdminNote = undefined;
+  await booking.save();
+
+  const payoutLine = formatPayoutSummary(input.payout);
+  await sendAdminBookingChangedEmail({
+    bookingReference: booking.bookingReference,
+    action: "updated",
+    summary: `Taxi refund request · $${Number(booking.refundAmount).toFixed(2)} · ${booking.customerName}`,
+    extra: [`Payout: ${payoutLine}`, "Open Admin → Refunds to review and process."].join("\n"),
+    href: "/admin/refunds",
+  }).catch((error) => {
+    console.error("[email] Failed to send admin taxi refund request alert", error);
+  });
+
+  await createAdminNotification({
+    type: "refund_request",
+    title: "New taxi refund request",
+    body: `${booking.customerName} · ${booking.bookingReference} · $${Number(booking.refundAmount).toFixed(2)} · ${payoutLine}`,
+    href: "/admin/refunds",
+    entityId: String(booking._id),
+  }).catch((error) => {
+    console.error("[notify] Failed to create admin taxi refund notification", error);
+  });
+
+  if (booking.userId) {
+    await createUserNotification({
+      userId: String(booking.userId),
+      type: "taxi",
+      title: "Refund request submitted",
+      body: `We received your request for $${Number(booking.refundAmount).toFixed(2)}. Admin will process it manually.`,
+      href: "/my-bookings",
+      entityId: String(booking._id),
+    }).catch((error) => {
+      console.error("[notify] Failed to create guest taxi refund notification", error);
+    });
+  }
+
+  return booking.toObject();
 }

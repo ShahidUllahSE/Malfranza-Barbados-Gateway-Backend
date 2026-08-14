@@ -8,8 +8,12 @@ import {
   getMyNotifications,
   getMyTaxiBookings,
   patchMyNotificationRead,
+  postCancelMyBooking,
+  postCancelMyTaxiBooking,
   postLogin,
   postMyNotificationsReadAll,
+  postMyStayRefundRequest,
+  postMyTaxiRefundRequest,
   postPasswordResetConfirm,
   postPasswordResetRequest,
   postRegister,
@@ -30,7 +34,11 @@ userRouter.post("/password-reset/confirm", authOtpLimiter, postPasswordResetConf
 userRouter.get("/me", authenticateUser, getMe);
 userRouter.get("/me/bookings", authenticateUser, getMyBookings);
 userRouter.get("/me/bookings/:reference", authenticateUser, getMyBookingByReference);
+userRouter.post("/me/bookings/:reference/cancel", authenticateUser, postCancelMyBooking);
+userRouter.post("/me/bookings/:reference/refund-request", authenticateUser, postMyStayRefundRequest);
 userRouter.get("/me/taxi", authenticateUser, getMyTaxiBookings);
+userRouter.post("/me/taxi/:reference/cancel", authenticateUser, postCancelMyTaxiBooking);
+userRouter.post("/me/taxi/:reference/refund-request", authenticateUser, postMyTaxiRefundRequest);
 userRouter.get("/me/notifications", authenticateUser, getMyNotifications);
 userRouter.patch("/me/notifications/:id/read", authenticateUser, patchMyNotificationRead);
 userRouter.post("/me/notifications/read-all", authenticateUser, postMyNotificationsReadAll);

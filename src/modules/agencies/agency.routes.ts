@@ -4,6 +4,7 @@ import {
   getAgencyMe,
   getAgencyMeBookings,
   getAgencyMeCommission,
+  getPublicAgencyCommissionRate,
   postAgencyPasswordResetConfirm,
   postAgencyPasswordResetRequest,
   postLoginAgency,
@@ -12,6 +13,7 @@ import {
 export const agencyRouter = Router();
 
 // No public self-registration — agencies are created by admin only.
+agencyRouter.get("/commission-rate", getPublicAgencyCommissionRate);
 agencyRouter.post("/login", postLoginAgency);
 agencyRouter.post("/password-reset/request", postAgencyPasswordResetRequest);
 agencyRouter.post("/password-reset/confirm", postAgencyPasswordResetConfirm);

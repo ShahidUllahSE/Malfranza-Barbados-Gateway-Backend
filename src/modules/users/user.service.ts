@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { jwtVerify, SignJWT } from "jose";
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
+import { evaluateCancellation } from "../bookings/cancellation.js";
 import { Booking } from "../bookings/booking.model.js";
 import { sendPasswordResetEmail, sendSignupOtpEmail } from "../notifications/email.service.js";
 import { TaxiBooking } from "../taxi/taxi.model.js";
@@ -395,10 +396,21 @@ export async function getUserProfile(userId: string) {
 }
 
 export async function listUserBookings(userId: string) {
-  return Booking.find({ userId })
+  const items = await Booking.find({ userId })
     .sort({ createdAt: -1 })
     .limit(100)
     .lean();
+
+  return items.map((booking) => ({
+    ...booking,
+    cancellation: evaluateCancellation({
+      eventDate: booking.checkIn,
+      paymentStatus: booking.paymentStatus,
+      amount: Number(booking.totalAmount),
+      status: booking.status,
+      kind: "stay",
+    }),
+  }));
 }
 
 export async function getUserBookingByReference(userId: string, reference: string) {
@@ -411,7 +423,16 @@ export async function getUserBookingByReference(userId: string, reference: strin
     throw new AppError(404, "Booking not found");
   }
 
-  return booking;
+  return {
+    ...booking,
+    cancellation: evaluateCancellation({
+      eventDate: booking.checkIn,
+      paymentStatus: booking.paymentStatus,
+      amount: Number(booking.totalAmount),
+      status: booking.status,
+      kind: "stay",
+    }),
+  };
 }
 
 export async function listUserTaxiBookings(userId: string) {
@@ -424,7 +445,16 @@ export async function listUserTaxiBookings(userId: string) {
   return items.map((trip) => {
     const showDriver =
       trip.status === "assigned" || trip.status === "en_route" || trip.status === "completed";
-    return showDriver ? trip : { ...trip, driverId: null };
+    return {
+      ...(showDriver ? trip : { ...trip, driverId: null }),
+      cancellation: evaluateCancellation({
+        eventDate: trip.pickupDate,
+        paymentStatus: trip.paymentStatus,
+        amount: Number(trip.estimatedFare),
+        status: trip.status,
+        kind: "taxi",
+      }),
+    };
   });
 }
 

@@ -5,6 +5,10 @@ import {
   listAgenciesAdmin,
   setAgencyActive,
 } from "./agency.service.js";
+import {
+  getAgencyCommissionSettings,
+  updateAgencyCommissionSettings,
+} from "./agency-settings.service.js";
 import { agencyCommissionQuerySchema, registerAgencySchema } from "./agency.validation.js";
 import { z } from "zod";
 import { Types } from "mongoose";
@@ -28,6 +32,32 @@ export const getAdminAgencyCommission: RequestHandler = async (request, response
   const query = agencyCommissionQuerySchema.parse(request.query);
   const report = await adminCommissionReport(query);
   response.status(200).json({ success: true, data: report });
+};
+
+export const getAdminAgencySettings: RequestHandler = async (_request, response) => {
+  const settings = await getAgencyCommissionSettings();
+  response.status(200).json({ success: true, data: settings });
+};
+
+export const patchAdminAgencySettings: RequestHandler = async (request, response) => {
+  const input = z
+    .object({
+      defaultCommissionPercent: z.number().min(0).max(100).optional(),
+      defaultCommissionRate: z.number().min(0).max(1).optional(),
+      applyToAllAgencies: z.boolean().optional(),
+    })
+    .refine(
+      (v) => v.defaultCommissionPercent != null || v.defaultCommissionRate != null,
+      { message: "Provide defaultCommissionPercent or defaultCommissionRate" },
+    )
+    .parse(request.body);
+
+  const settings = await updateAgencyCommissionSettings(input);
+  response.status(200).json({
+    success: true,
+    message: "Travel agent commission rate updated",
+    data: settings,
+  });
 };
 
 export const patchAdminAgencyActive: RequestHandler = async (request, response) => {

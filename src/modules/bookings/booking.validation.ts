@@ -72,6 +72,8 @@ export const createBookingSchema = z
     /** Demo/checkout payment — defaults to unpaid when omitted. */
     paymentStatus: z.enum(["unpaid", "paid"]).optional(),
     paymentReference: z.string().trim().min(1).max(200).optional(),
+    /** Offline/admin bookings can be created already confirmed. */
+    status: z.enum(["pending", "confirmed"]).optional(),
     taxi: z
       .object({
         pickup: z.string().trim().min(2).max(300),
@@ -131,7 +133,44 @@ export const updatePaymentStatusSchema = z.object({
   paymentReference: z.string().trim().max(200).optional(),
 });
 
+export const adminCreateBookingSchema = z
+  .object({
+    apartmentId,
+    unitId: unitId.optional(),
+    unitIds: unitIds.optional(),
+    checkIn: dateString,
+    checkOut: dateString,
+    guestName: z.string().trim().min(2).max(120),
+    guestEmail: z.email().max(254),
+    guestPhone: z.string().trim().min(6).max(40),
+    guests: z.coerce.number().int().min(1).max(20),
+    specialRequests: z.string().trim().max(2000).optional(),
+    agencyCode: z.preprocess(
+      (value) => {
+        if (value == null || value === "") return undefined;
+        if (typeof value !== "string") return value;
+        const trimmed = value.trim().toUpperCase();
+        return trimmed === "" ? undefined : trimmed;
+      },
+      z
+        .string()
+        .min(4)
+        .max(40)
+        .regex(/^AG-[A-Z0-9]+$/, "Agency code must look like AG-XXXXXXXX")
+        .optional(),
+    ),
+    paymentStatus: z.enum(["unpaid", "paid"]).optional(),
+    paymentReference: z.string().trim().max(200).optional(),
+    status: z.enum(["pending", "confirmed"]).optional(),
+    notifyGuest: z.boolean().optional(),
+  })
+  .refine((input) => input.checkOut > input.checkIn, {
+    message: "Check-out must be after check-in",
+    path: ["checkOut"],
+  });
+
 export type AvailabilityQuery = z.infer<typeof availabilityQuerySchema>;
 export type OccupancyQuery = z.infer<typeof occupancyQuerySchema>;
 export type CreateBookingInput = z.infer<typeof createBookingSchema>;
+export type AdminCreateBookingInput = z.infer<typeof adminCreateBookingSchema>;
 export type AdminBookingListQuery = z.infer<typeof adminBookingListQuerySchema>;
