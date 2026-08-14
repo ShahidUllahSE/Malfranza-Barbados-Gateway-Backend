@@ -10,6 +10,7 @@ const createOrderSchema = z.object({
   amount: z.coerce.number().positive(),
   currency: z.string().trim().length(3).optional(),
   description: z.string().trim().max(120).optional(),
+  couponCode: z.string().trim().max(40).optional(),
 });
 
 const captureOrderSchema = z.object({

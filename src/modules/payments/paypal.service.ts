@@ -1,5 +1,6 @@
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
+import { applyCheckoutCoupon } from "./coupon.js";
 
 type PayPalTokenResponse = {
   access_token?: string;
@@ -72,22 +73,34 @@ async function getAccessToken(): Promise<string> {
     value: payload.access_token,
     expiresAt: now + (payload.expires_in ?? 300) * 1000,
   };
-  return payload.access_token;
+  return cachedToken.value;
 }
 
 export async function createPayPalOrder(input: {
   amount: number;
   currency?: string;
   description?: string;
-}): Promise<{ orderId: string; status: string }> {
-  const amount = Number(input.amount);
-  if (!Number.isFinite(amount) || amount < 0.5) {
+  couponCode?: string;
+}): Promise<{
+  orderId: string;
+  status: string;
+  amount: number;
+  originalAmount: number;
+  discountPercent: number;
+  couponApplied: boolean;
+  couponCode: string | null;
+}> {
+  const priced = applyCheckoutCoupon(input.amount, input.couponCode);
+  if (priced.amount < 0.5) {
     throw new AppError(400, "Amount must be at least $0.50");
   }
 
   const token = await getAccessToken();
   const currency = (input.currency || "USD").toUpperCase();
-  const value = amount.toFixed(2);
+  const value = priced.amount.toFixed(2);
+  const description = priced.couponApplied
+    ? `${input.description || "Malfranza booking"} (coupon ${priced.code})`.slice(0, 120)
+    : (input.description || "Malfranza booking").slice(0, 120);
 
   const response = await fetch(`${apiBase()}/v2/checkout/orders`, {
     method: "POST",
@@ -103,7 +116,7 @@ export async function createPayPalOrder(input: {
             currency_code: currency,
             value,
           },
-          description: (input.description || "Malfranza booking").slice(0, 120),
+          description,
         },
       ],
       application_context: {
@@ -125,7 +138,15 @@ export async function createPayPalOrder(input: {
     throw new AppError(502, detail || "Could not create PayPal order");
   }
 
-  return { orderId: order.id, status: order.status || "CREATED" };
+  return {
+    orderId: order.id,
+    status: order.status || "CREATED",
+    amount: priced.amount,
+    originalAmount: priced.originalAmount,
+    discountPercent: priced.discountPercent,
+    couponApplied: priced.couponApplied,
+    couponCode: priced.code,
+  };
 }
 
 export async function capturePayPalOrder(orderId: string): Promise<{
