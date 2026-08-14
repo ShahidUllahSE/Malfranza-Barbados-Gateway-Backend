@@ -99,22 +99,28 @@ export async function updateTaxiSettings(input: UpdateTaxiSettingsInput): Promis
   return toSettings(updated!);
 }
 
-/** Per-km rate for the passenger tier. */
-export function guestFareFromSettings(settings: TaxiFareSettings, passengers: number): number {
-  if (passengers <= 4) return settings.fareFor1to4;
-  if (passengers <= 7) return settings.fareFor5to7;
+/** Per-km rate for the vehicle capacity tier (4-seater / XL 7 / 8–10). */
+export function vehicleFareFromSettings(settings: TaxiFareSettings, capacity: number): number {
+  if (capacity <= 4) return settings.fareFor1to4;
+  if (capacity <= 7) return settings.fareFor5to7;
   return settings.fareFor8to10;
 }
 
+/** @deprecated Prefer vehicleFareFromSettings — rates are by vehicle size, not party size. */
+export function guestFareFromSettings(settings: TaxiFareSettings, passengers: number): number {
+  return vehicleFareFromSettings(settings, passengers);
+}
+
 /**
- * Distance × tier $/km, floored by minimum.
+ * Distance × vehicle-tier $/km, floored by minimum.
+ * `capacity` is the van's passenger capacity (4, 7, or 10), not how many guests booked.
  */
 export function calculateFareFromSettings(
   settings: TaxiFareSettings,
   distanceKm: number,
-  passengers: number,
+  capacity: number,
 ): number {
-  const perKm = guestFareFromSettings(settings, passengers);
+  const perKm = vehicleFareFromSettings(settings, capacity);
   const total = Math.max(0, distanceKm) * perKm;
   return Math.max(settings.minimumFareUsd, money(total));
 }

@@ -24,7 +24,7 @@ import { TaxiBooking, type TaxiBookingRecord } from "./taxi.model.js";
 import {
   calculateFareFromSettings,
   getTaxiSettings,
-  guestFareFromSettings,
+  vehicleFareFromSettings,
 } from "./taxi-settings.service.js";
 import { fetchDrivingDistance } from "./google-routes.js";
 import type {
@@ -74,18 +74,32 @@ async function resolveRouteDistance(input: {
   );
 }
 
-export async function estimateFare(input: FareEstimateInput) {
+export async function estimateFare(
+  input: FareEstimateInput,
+  vehicleCapacity?: number,
+) {
   const settings = await getTaxiSettings();
   const route = await resolveRouteDistance(input);
-  const estimatedFare = calculateFareFromSettings(settings, route.distanceKm, input.passengers);
+  // Fare is by vehicle size. Without a selected van, use the smallest tier that fits the party.
+  const capacity =
+    vehicleCapacity != null && vehicleCapacity > 0
+      ? vehicleCapacity
+      : input.passengers <= 4
+        ? 4
+        : input.passengers <= 7
+          ? 7
+          : 10;
+  const estimatedFare = calculateFareFromSettings(settings, route.distanceKm, capacity);
+  const perKm = vehicleFareFromSettings(settings, capacity);
   return {
     distanceKm: route.distanceKm,
     durationMinutes: route.durationMinutes,
     estimatedFare,
     currency: "USD" as const,
     estimated: false as const,
-    guestFare: guestFareFromSettings(settings, input.passengers),
-    perKmUsd: guestFareFromSettings(settings, input.passengers),
+    guestFare: perKm,
+    perKmUsd: perKm,
+    vehicleCapacity: capacity,
   };
 }
 
@@ -95,7 +109,6 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
 
   let distanceKm: number | null = null;
   let durationMinutes: number | null = null;
-  let estimatedFare = settings.minimumFareUsd;
 
   if (
     (input.pickupLocation && input.dropoffLocation) ||
@@ -108,7 +121,6 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
       const route = await resolveRouteDistance(input);
       distanceKm = route.distanceKm;
       durationMinutes = route.durationMinutes;
-      estimatedFare = calculateFareFromSettings(settings, route.distanceKm, passengers);
     } catch (error) {
       console.warn("[taxi] Vehicle list continuing without live distance", error);
     }
@@ -148,33 +160,43 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
     slotsByDriver.set(id, list);
   }
 
-  const guestFare = guestFareFromSettings(settings, passengers);
+  const vehicles = drivers
+    .map((d) => {
+      const capacity = Number(d.passengerCapacity ?? 4);
+      const busy = busySet.has(d._id.toString());
+      const fits = capacity >= passengers;
+      const fare =
+        distanceKm != null
+          ? calculateFareFromSettings(settings, distanceKm, capacity)
+          : settings.minimumFareUsd;
+      return {
+        id: d._id.toString(),
+        name: d.name,
+        vehicleLabel: d.vehicleLabel || `${capacity}-seater`,
+        passengerCapacity: capacity,
+        isAvailable: Boolean(d.isAvailable) && !busy,
+        fitsParty: fits,
+        fare,
+        perKmUsd: vehicleFareFromSettings(settings, capacity),
+        busyUntil: busyUntilByDriver.get(d._id.toString()) ?? null,
+        bookedSlots: (slotsByDriver.get(d._id.toString()) ?? []).slice(0, 8),
+      };
+    })
+    .filter((v) => v.fitsParty);
+
+  const fromFare =
+    vehicles.length > 0
+      ? Math.min(...vehicles.map((v) => v.fare))
+      : settings.minimumFareUsd;
 
   return {
-    fare: estimatedFare,
-    guestFare,
+    fare: fromFare,
+    guestFare: vehicleFareFromSettings(settings, passengers <= 4 ? 4 : passengers <= 7 ? 7 : 10),
     passengers,
     distanceKm,
     durationMinutes,
     currency: "USD" as const,
-    vehicles: drivers
-      .map((d) => {
-        const capacity = Number(d.passengerCapacity ?? 4);
-        const busy = busySet.has(d._id.toString());
-        const fits = capacity >= passengers;
-        return {
-          id: d._id.toString(),
-          name: d.name,
-          vehicleLabel: d.vehicleLabel || `${capacity}-seater`,
-          passengerCapacity: capacity,
-          isAvailable: Boolean(d.isAvailable) && !busy,
-          fitsParty: fits,
-          fare: estimatedFare,
-          busyUntil: busyUntilByDriver.get(d._id.toString()) ?? null,
-          bookedSlots: (slotsByDriver.get(d._id.toString()) ?? []).slice(0, 8),
-        };
-      })
-      .filter((v) => v.fitsParty),
+    vehicles,
   };
 }
 
@@ -192,9 +214,6 @@ export async function createTaxiBooking(
     throw new AppError(400, "Pay with PayPal before booking this taxi ride");
   }
 
-  const estimate = await estimateFare(input);
-  const pickupDate = toUtcDate(input.pickupDate);
-
   const {
     driverId: requestedDriverId,
     paymentMethod,
@@ -206,6 +225,21 @@ export async function createTaxiBooking(
     dropoffLng: _dropoffLng,
     ...bookingFields
   } = input as CreateTaxiBookingInput & AdminCreateTaxiBookingInput;
+
+  let vehicleCapacity: number | undefined;
+  if (requestedDriverId) {
+    const driver = await Driver.findOne({ _id: requestedDriverId, isActive: true }).lean();
+    if (!driver) {
+      throw new AppError(404, "Selected vehicle was not found");
+    }
+    if (Number(driver.passengerCapacity ?? 0) < input.passengers) {
+      throw new AppError(400, "Selected vehicle is too small for this party");
+    }
+    vehicleCapacity = Number(driver.passengerCapacity ?? 4);
+  }
+
+  const estimate = await estimateFare(input, vehicleCapacity);
+  const pickupDate = toUtcDate(input.pickupDate);
 
   if (requestedDriverId) {
     const busy = await busyDriverIdsForSlot(pickupDate, input.pickupTime);
