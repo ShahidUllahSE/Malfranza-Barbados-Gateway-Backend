@@ -2,7 +2,7 @@ import { AppError } from "../../middleware/error-handler.js";
 
 /** Temporary single test coupon — replace with a full coupon system later. */
 export const TEST_COUPON_CODE = "MFZTEST99";
-export const TEST_COUPON_PERCENT = 99;
+export const TEST_COUPON_PERCENT = 99.9;
 const PAYPAL_MIN_USD = 0.5;
 
 function money(value: number) {
