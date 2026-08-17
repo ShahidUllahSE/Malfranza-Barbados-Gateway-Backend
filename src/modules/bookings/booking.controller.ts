@@ -122,7 +122,8 @@ export const postBooking: RequestHandler = async (request, response) => {
   const plainPassword = guestAccount.plainPassword;
 
   const guest = guestDetailsFromUser(user, input);
-  const booking = await createBooking({ ...input, ...guest }, user.id);
+  // Guest stay bookings are confirmed on create — admin does not need to confirm.
+  const booking = await createBooking({ ...input, ...guest, status: "confirmed" }, user.id);
 
   const checkIn = String(booking.checkIn).slice(0, 10);
   const checkOut = String(booking.checkOut).slice(0, 10);
