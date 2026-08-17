@@ -19,7 +19,7 @@ const frontendRoot = path.resolve(__dirname, "../../../Malfranza Barbados Gatewa
 const roomsDir = path.join(frontendRoot, "src/assets/rooms");
 const legacyDir = path.join(frontendRoot, "src/assets/newimage");
 
-const MAX_PER_SLUG = 8;
+const MAX_PER_SLUG = 10;
 
 const rooms: Array<{
   slug: string;
@@ -31,35 +31,35 @@ const rooms: Array<{
   {
     slug: "apartment-1",
     folderHint: "tropical-escape",
-    dedicatedDir: "room1",
+    dedicatedDir: "Tropical Escape\u200b",
     legacyMatch: /apartment number 1/i,
     label: "Tropical Escape (Room 1)",
   },
   {
     slug: "apartment-2",
     folderHint: "island-breeze",
-    dedicatedDir: "room2",
+    dedicatedDir: "island breeze",
     legacyMatch: /apartment number 2/i,
     label: "Island Breeze (Room 2)",
   },
   {
     slug: "apartment-3",
     folderHint: "palm-retreat",
-    dedicatedDir: "room3",
+    dedicatedDir: "Palm Retreat\u200b",
     legacyMatch: /apartment number 3/i,
     label: "Palm Retreat (Room 3)",
   },
   {
     slug: "apartment-4",
     folderHint: "golden-serenity",
-    dedicatedDir: "room4",
+    dedicatedDir: "Golden Serenity\u200b",
     legacyMatch: /apartment number 4|golden/i,
     label: "Golden Serenity (Room 4)",
   },
   {
     slug: "apartment-a-and-b",
     folderHint: "sunset-suite",
-    dedicatedDir: "Malfranza A and B",
+    dedicatedDir: "Sunset Suite\u200b",
     legacyMatch: /a and b|sunset/i,
     label: "Sunset Suite (Room A & B)",
   },
