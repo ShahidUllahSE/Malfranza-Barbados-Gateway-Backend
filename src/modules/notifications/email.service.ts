@@ -1,8 +1,8 @@
 import nodemailer from "nodemailer";
 import { env } from "../../config/env.js";
 
-const PHONE = "1 246 234 4875 / 1 246 231 4875";
-const ADDRESS = "Oistins, Christ Church, Barbados";
+const PHONE = "1 (246) 234-4875";
+const ADDRESS = "Haggatt Hall, St. Michael, Barbados";
 
 function smtpConfigured() {
   return Boolean(env.SMTP_USER && env.SMTP_PASS);
@@ -1103,6 +1103,7 @@ export async function sendAdminNewEnquiryEmail(input: {
   email: string;
   phone?: string;
   subject?: string;
+  dates?: string;
   message: string;
 }) {
   const to = env.ADMIN_NOTIFY_EMAIL;
@@ -1115,16 +1116,20 @@ export async function sendAdminNewEnquiryEmail(input: {
       "New website inquiry.",
       `From: ${input.name}`,
       `Contact: ${input.email}${input.phone ? ` · ${input.phone}` : ""}`,
+      input.subject ? `Interest: ${input.subject}` : "",
+      input.dates ? `Dates: ${input.dates}` : "",
       "",
       input.message,
       "",
       `Admin: ${siteUrl("/admin/enquiries")}`,
-    ],
+    ].filter(Boolean),
     `<p>Hi Gregory,</p>
      <p>You've received a new inquiry through the website.</p>
      <ul>
        <li><strong>From:</strong> ${escapeHtml(input.name)}</li>
        <li><strong>Contact:</strong> ${escapeHtml(input.email)}${input.phone ? ` · ${escapeHtml(input.phone)}` : ""}</li>
+       ${input.subject ? `<li><strong>Interest:</strong> ${escapeHtml(input.subject)}</li>` : ""}
+       ${input.dates ? `<li><strong>Dates:</strong> ${escapeHtml(input.dates)}</li>` : ""}
        <li><strong>Reference:</strong> ${escapeHtml(input.reference)}</li>
      </ul>
      <p style="white-space:pre-wrap;">${escapeHtml(input.message)}</p>

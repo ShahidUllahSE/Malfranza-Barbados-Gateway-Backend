@@ -39,12 +39,20 @@ export const postEnquiry: RequestHandler = async (request, response) => {
     console.error("[email] Failed to send enquiry acknowledgement", error);
   });
 
+  const dateLabel =
+    input.preferredDate && input.preferredDateEnd
+      ? `${input.preferredDate} → ${input.preferredDateEnd}`
+      : input.preferredDate
+        ? input.preferredDate
+        : undefined;
+
   await sendAdminNewEnquiryEmail({
     reference: enquiry.reference,
     name: enquiry.name,
     email: enquiry.email,
     phone: enquiry.phone ?? undefined,
     subject: enquiry.interestedIn,
+    dates: dateLabel,
     message: enquiry.message,
   }).catch((error) => {
     console.error("[email] Failed to send admin enquiry alert", error);

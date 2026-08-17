@@ -28,6 +28,7 @@ export async function createEnquiry(input: CreateEnquiryInput, userId?: string) 
     userId,
     email: input.email.toLowerCase(),
     preferredDate: input.preferredDate ? toUtcDate(input.preferredDate) : undefined,
+    preferredDateEnd: input.preferredDateEnd ? toUtcDate(input.preferredDateEnd) : undefined,
     reference: generateReference(),
   });
 }

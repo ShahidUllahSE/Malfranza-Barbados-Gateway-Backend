@@ -7,11 +7,11 @@ import { Schema, model, type InferSchemaType } from "mongoose";
 const taxiSettingsSchema = new Schema(
   {
     key: { type: String, required: true, unique: true, default: "default" },
-    fareFor1to4: { type: Number, min: 0, default: 1.62 },
+    fareFor1to4: { type: Number, min: 0, default: 2.4 },
     fareFor5to7: { type: Number, min: 0, default: 2.4 },
     fareFor8to10: { type: Number, min: 0, default: 4 },
-    fareFor1Guest: { type: Number, required: true, min: 0, default: 1.62 },
-    fareFor2Guests: { type: Number, required: true, min: 0, default: 1.62 },
+    fareFor1Guest: { type: Number, required: true, min: 0, default: 2.4 },
+    fareFor2Guests: { type: Number, required: true, min: 0, default: 2.4 },
     fareFor3Guests: { type: Number, required: true, min: 0, default: 2.4 },
     fareFor4PlusGuests: { type: Number, required: true, min: 0, default: 4 },
     /** Legacy field — fare is tier $/km × distance; kept for compatibility. */

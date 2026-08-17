@@ -9,14 +9,26 @@ const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD forma
   "Enter a valid date",
 );
 
-export const createEnquirySchema = z.object({
-  name: z.string().trim().min(1).max(100),
-  email: z.email().max(254),
-  phone: z.string().trim().max(40).optional(),
-  interestedIn: z.enum(["Apartment Stay", "Taxi Service", "Both", "Other"]),
-  preferredDate: dateString.optional(),
-  message: z.string().trim().min(1).max(1000),
-});
+export const createEnquirySchema = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    email: z.email().max(254),
+    phone: z.string().trim().max(40).optional(),
+    interestedIn: z.enum(["Apartment Stay", "Taxi Service", "Both", "Other"]),
+    preferredDate: dateString.optional(),
+    preferredDateEnd: dateString.optional(),
+    message: z.string().trim().min(1).max(1000),
+  })
+  .refine(
+    (input) =>
+      !input.preferredDate ||
+      !input.preferredDateEnd ||
+      input.preferredDateEnd >= input.preferredDate,
+    {
+      message: "End date must not be before start date",
+      path: ["preferredDateEnd"],
+    },
+  );
 
 export const adminEnquiryListQuerySchema = z
   .object({

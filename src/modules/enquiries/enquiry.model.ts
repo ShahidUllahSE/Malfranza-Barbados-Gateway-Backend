@@ -25,6 +25,7 @@ const enquirySchema = new Schema(
       index: true,
     },
     preferredDate: { type: Date },
+    preferredDateEnd: { type: Date },
     message: { type: String, required: true, trim: true, maxlength: 1000 },
     status: {
       type: String,

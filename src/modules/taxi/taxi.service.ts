@@ -162,7 +162,7 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
 
   const vehicles = drivers
     .map((d) => {
-      const capacity = Number(d.passengerCapacity ?? 4);
+      const capacity = Number(d.passengerCapacity ?? 7);
       const busy = busySet.has(d._id.toString());
       const fits = capacity >= passengers;
       const fare =
@@ -235,7 +235,7 @@ export async function createTaxiBooking(
     if (Number(driver.passengerCapacity ?? 0) < input.passengers) {
       throw new AppError(400, "Selected vehicle is too small for this party");
     }
-    vehicleCapacity = Number(driver.passengerCapacity ?? 4);
+    vehicleCapacity = Number(driver.passengerCapacity ?? 7);
   }
 
   const estimate = await estimateFare(input, vehicleCapacity);

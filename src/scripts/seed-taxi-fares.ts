@@ -12,9 +12,8 @@ async function main() {
     { new: true, upsert: true, runValidators: true },
   );
   console.log("Taxi rates ($/km) set:", {
-    "1–4 guests": `$${updated?.fareFor1to4 ?? updated?.fareFor1Guest}/km`,
-    "5–7 guests XL": `$${updated?.fareFor5to7 ?? updated?.fareFor3Guests}/km`,
-    "8–10 guests": `$${updated?.fareFor8to10 ?? updated?.fareFor4PlusGuests}/km`,
+    "XL 7-seater": `$${updated?.fareFor5to7 ?? updated?.fareFor3Guests}/km`,
+    "12-seater": `$${updated?.fareFor8to10 ?? updated?.fareFor4PlusGuests}/km`,
     minimum: `$${updated?.minimumFareUsd}`,
   });
   await mongoose.disconnect();

@@ -2,11 +2,11 @@ import { TaxiSettings } from "./taxi-settings.model.js";
 import type { UpdateTaxiSettingsInput } from "./taxi.validation.js";
 
 export type TaxiFareSettings = {
-  /** USD per km for 1–4 guests (standard car). */
+  /** Legacy alias — fleet no longer offers a 4-seater; kept for older clients. */
   fareFor1to4: number;
-  /** USD per km for 5–7 guests (XL). */
+  /** USD per km for XL 7-seater. */
   fareFor5to7: number;
-  /** USD per km for 8–10 guests. */
+  /** USD per km for 12-seater. */
   fareFor8to10: number;
   /** Aliases kept so older admin/UI clients still work. */
   fareFor1Guest: number;
@@ -18,13 +18,13 @@ export type TaxiFareSettings = {
   minimumFareUsd: number;
 };
 
-/** Client rates: $/km by capacity tier. */
+/** Client rates: $/km by vehicle capacity (7-seater / 12-seater only). */
 export const REGULATED_TAXI_FARES: TaxiFareSettings = {
-  fareFor1to4: 1.62,
+  fareFor1to4: 2.4,
   fareFor5to7: 2.4,
   fareFor8to10: 4,
-  fareFor1Guest: 1.62,
-  fareFor2Guests: 1.62,
+  fareFor1Guest: 2.4,
+  fareFor2Guests: 2.4,
   fareFor3Guests: 2.4,
   fareFor4PlusGuests: 4,
   perKmUsd: 0,
@@ -48,15 +48,16 @@ function toSettings(doc: {
   perKmUsd: number;
   minimumFareUsd: number;
 }): TaxiFareSettings {
-  const fareFor1to4 = Number(doc.fareFor1to4 ?? doc.fareFor1Guest ?? 1.62);
   const fareFor5to7 = Number(doc.fareFor5to7 ?? doc.fareFor3Guests ?? 2.4);
   const fareFor8to10 = Number(doc.fareFor8to10 ?? doc.fareFor4PlusGuests ?? 4);
+  // 4-seater tier retired — map legacy field to 7-seater rate when missing.
+  const fareFor1to4 = Number(doc.fareFor1to4 ?? doc.fareFor1Guest ?? fareFor5to7);
   return {
     fareFor1to4,
     fareFor5to7,
     fareFor8to10,
-    fareFor1Guest: fareFor1to4,
-    fareFor2Guests: fareFor1to4,
+    fareFor1Guest: fareFor5to7,
+    fareFor2Guests: fareFor5to7,
     fareFor3Guests: fareFor5to7,
     fareFor4PlusGuests: fareFor8to10,
     perKmUsd: Number(doc.perKmUsd ?? 0),
@@ -65,15 +66,15 @@ function toSettings(doc: {
 }
 
 function persistableFromInput(input: UpdateTaxiSettingsInput) {
-  const fareFor1to4 = input.fareFor1to4 ?? input.fareFor1Guest ?? 1.62;
   const fareFor5to7 = input.fareFor5to7 ?? input.fareFor3Guests ?? 2.4;
   const fareFor8to10 = input.fareFor8to10 ?? input.fareFor4PlusGuests ?? 4;
+  const fareFor1to4 = input.fareFor1to4 ?? input.fareFor1Guest ?? fareFor5to7;
   return {
     fareFor1to4,
     fareFor5to7,
     fareFor8to10,
-    fareFor1Guest: fareFor1to4,
-    fareFor2Guests: fareFor1to4,
+    fareFor1Guest: fareFor5to7,
+    fareFor2Guests: fareFor5to7,
     fareFor3Guests: fareFor5to7,
     fareFor4PlusGuests: fareFor8to10,
     perKmUsd: input.perKmUsd ?? 0,
@@ -99,9 +100,8 @@ export async function updateTaxiSettings(input: UpdateTaxiSettingsInput): Promis
   return toSettings(updated!);
 }
 
-/** Per-km rate for the vehicle capacity tier (4-seater / XL 7 / 8–10). */
+/** Per-km rate: ≤7 → XL 7-seater, else 12-seater ($4/km). */
 export function vehicleFareFromSettings(settings: TaxiFareSettings, capacity: number): number {
-  if (capacity <= 4) return settings.fareFor1to4;
   if (capacity <= 7) return settings.fareFor5to7;
   return settings.fareFor8to10;
 }
@@ -113,7 +113,7 @@ export function guestFareFromSettings(settings: TaxiFareSettings, passengers: nu
 
 /**
  * Distance × vehicle-tier $/km, floored by minimum.
- * `capacity` is the van's passenger capacity (4, 7, or 10), not how many guests booked.
+ * `capacity` is the van's passenger capacity (7 or 12), not how many guests booked.
  */
 export function calculateFareFromSettings(
   settings: TaxiFareSettings,
