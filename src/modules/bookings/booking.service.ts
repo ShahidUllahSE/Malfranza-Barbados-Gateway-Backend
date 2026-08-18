@@ -6,7 +6,8 @@ import {
   type PricedRoomType,
   roomTypeFromBedrooms,
   staySubtotal,
-  averageNightly,
+  staySubtotalForUnits,
+  combinedNightlyForUnits,
   catalogFromRate,
 } from "../apartments/pricing.js";
 import {
@@ -365,10 +366,17 @@ export async function createBooking(input: CreateBookingInput, userId?: string) 
             ? "two-bedroom"
             : "one-bedroom";
 
-      const staySubtotalAmount = money(staySubtotal(pricedType, checkInIso, checkOutIso));
-      const nightlyRate = nights > 0
-        ? money(averageNightly(pricedType, checkInIso, checkOutIso))
-        : catalogFromRate(pricedType);
+      const staySubtotalAmount = money(
+        selectedUnits.length > 0
+          ? staySubtotalForUnits(selectedUnits, checkInIso, checkOutIso)
+          : staySubtotal(pricedType, checkInIso, checkOutIso),
+      );
+      const nightlyRate =
+        nights > 0
+          ? money(staySubtotalAmount / nights)
+          : selectedUnits.length > 0
+            ? combinedNightlyForUnits(selectedUnits)
+            : catalogFromRate(pricedType);
       const serviceFee = 0;
       const totalAmount = money(staySubtotalAmount + serviceFee + (input.taxi?.fare ?? 0));
 

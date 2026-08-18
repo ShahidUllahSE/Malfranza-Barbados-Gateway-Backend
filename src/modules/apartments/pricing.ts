@@ -64,3 +64,31 @@ export function averageNightly(
   if (nights.length === 0) return catalogFromRate(roomType);
   return RATE_TABLE[roomType];
 }
+
+export function unitNightlyRate(
+  bedrooms: number,
+  storedPrice?: number | null,
+): number {
+  if (storedPrice != null && Number(storedPrice) > 0) return Number(storedPrice);
+  return catalogFromRate(roomTypeFromBedrooms(bedrooms));
+}
+
+export function combinedNightlyForUnits(
+  units: { bedrooms: number; pricePerNight?: number | null }[],
+): number {
+  return units.reduce(
+    (sum, unit) => sum + unitNightlyRate(unit.bedrooms, unit.pricePerNight),
+    0,
+  );
+}
+
+export function staySubtotalForUnits(
+  units: { bedrooms: number; pricePerNight?: number | null }[],
+  checkIn: string,
+  checkOut: string,
+): number {
+  const nights = stayNights(checkIn, checkOut);
+  if (nights.length === 0 || units.length === 0) return 0;
+  const nightly = combinedNightlyForUnits(units);
+  return Math.round(nightly * nights.length * 100) / 100;
+}

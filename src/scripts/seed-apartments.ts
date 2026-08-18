@@ -108,7 +108,7 @@ const apartments = [
     description:
       "Sunset Suite — Room A and Room B at Malfranza, Oistins. Book either room on its own, or both together. Each unit has its own space; Starlink internet throughout.",
     type: "two-bedroom" as const,
-    pricePerNight: catalogFromRate("one-bedroom"),
+    pricePerNight: catalogFromRate("two-bedroom"),
     maxGuests: 4,
     bedrooms: 2,
     bathrooms: 2,
