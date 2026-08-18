@@ -61,7 +61,7 @@ const rooms: Array<{
     folderHint: "sunset-suite",
     dedicatedDir: "Sunset Suite\u200b",
     legacyMatch: /a and b|sunset/i,
-    label: "Sunset Suite (Room A & B)",
+    label: "Sunset Suite (two-bedroom)",
   },
 ];
 
@@ -72,6 +72,13 @@ function listImagesFromDir(dir: string): string[] {
     .filter((name) => /\.(jpe?g|png|webp)$/i.test(name))
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
     .map((name) => path.join(dir, name));
+}
+
+/** Prefer `sunset-suite-01.jpg` over duplicate `sunset-suite-01-malfranza-…` files. */
+function preferCanonicalNumbered(files: string[], stem: string): string[] {
+  const re = new RegExp(`[\\\\/]${stem}-\\d+\\.(jpe?g|png|webp)$`, "i");
+  const canonical = files.filter((file) => re.test(file));
+  return (canonical.length > 0 ? canonical : files).slice(0, MAX_PER_SLUG);
 }
 
 function findRoomFolder(slug: string, hint: string): string | null {
@@ -93,7 +100,7 @@ function pickFiles(
   // 1) Curated rooms/{slug}_* folder
   const roomFolder = findRoomFolder(slug, hint);
   if (roomFolder) {
-    const fromRoom = listImagesFromDir(roomFolder).slice(0, MAX_PER_SLUG);
+    const fromRoom = preferCanonicalNumbered(listImagesFromDir(roomFolder), hint);
     if (fromRoom.length > 0) return fromRoom;
   }
 

@@ -10,7 +10,10 @@ export function uniquePhotoUrls(list: unknown): string[] {
     if (typeof raw !== "string") continue;
     const p = raw.trim();
     if (!p) continue;
-    if (p.includes("placeholder") || p.includes("ChatGPT Image")) continue;
+    if (p.includes("placeholder")) continue;
+    // Skip local ChatGPT-named files, but keep Cloudinary/CDN URLs that still
+    // contain that original filename in the path.
+    if (!/^https?:\/\//i.test(p) && /chatgpt image/i.test(p)) continue;
 
     const key = photoIdentity(p);
     if (seen.has(key) || seen.has(p)) continue;

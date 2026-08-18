@@ -2,6 +2,7 @@ import type { QueryFilter } from "mongoose";
 import { AppError } from "../../middleware/error-handler.js";
 import { Apartment, type ApartmentRecord } from "./apartment.model.js";
 import { uniquePhotoUrls, withUniquePhotos } from "./photo-utils.js";
+import { listingFromRate } from "./pricing.js";
 import type {
   AdminApartmentQuery,
   CreateApartmentInput,
@@ -11,6 +12,18 @@ import type {
 
 function isDuplicateKey(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === 11000;
+}
+
+function withPublicRates(apartment: ApartmentRecord) {
+  const photos = withUniquePhotos(apartment);
+  return {
+    ...photos,
+    pricePerNight: listingFromRate({
+      type: apartment.type,
+      pricePerNight: apartment.pricePerNight,
+      units: apartment.units,
+    }),
+  };
 }
 
 function escapeRegExp(value: string): string {
@@ -27,13 +40,13 @@ export async function listPublicApartments(input: PublicApartmentQuery) {
   if (input.sort === "newest") sort = { createdAt: -1 };
 
   const apartments = await Apartment.find(filter).sort(sort).lean();
-  return apartments.map(withUniquePhotos);
+  return apartments.map(withPublicRates);
 }
 
 export async function getPublicApartment(slug: string) {
   const apartment = await Apartment.findOne({ slug, isActive: true }).lean();
   if (!apartment) throw new AppError(404, "Apartment not found");
-  return withUniquePhotos(apartment);
+  return withPublicRates(apartment);
 }
 
 export async function listAdminApartments(input: AdminApartmentQuery) {

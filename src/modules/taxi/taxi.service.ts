@@ -22,8 +22,9 @@ import {
 import { notifyDriverOfAssignment } from "./driver-notify.js";
 import { TaxiBooking, type TaxiBookingRecord } from "./taxi.model.js";
 import {
-  calculateFareFromSettings,
+  calculateFareFromPerKm,
   getTaxiSettings,
+  perKmForDriver,
   vehicleFareFromSettings,
 } from "./taxi-settings.service.js";
 import { fetchDrivingDistance } from "./google-routes.js";
@@ -77,6 +78,7 @@ async function resolveRouteDistance(input: {
 export async function estimateFare(
   input: FareEstimateInput,
   vehicleCapacity?: number,
+  perKmUsd?: number,
 ) {
   const settings = await getTaxiSettings();
   const route = await resolveRouteDistance(input);
@@ -89,8 +91,11 @@ export async function estimateFare(
         : input.passengers <= 7
           ? 7
           : 10;
-  const estimatedFare = calculateFareFromSettings(settings, route.distanceKm, capacity);
-  const perKm = vehicleFareFromSettings(settings, capacity);
+  const perKm =
+    perKmUsd != null && perKmUsd > 0
+      ? perKmUsd
+      : vehicleFareFromSettings(settings, capacity);
+  const estimatedFare = calculateFareFromPerKm(settings, route.distanceKm, perKm);
   return {
     distanceKm: route.distanceKm,
     durationMinutes: route.durationMinutes,
@@ -165,9 +170,10 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
       const capacity = Number(d.passengerCapacity ?? 7);
       const busy = busySet.has(d._id.toString());
       const fits = capacity >= passengers;
+      const perKm = perKmForDriver(d, settings);
       const fare =
         distanceKm != null
-          ? calculateFareFromSettings(settings, distanceKm, capacity)
+          ? calculateFareFromPerKm(settings, distanceKm, perKm)
           : settings.minimumFareUsd;
       return {
         id: d._id.toString(),
@@ -177,7 +183,7 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
         isAvailable: Boolean(d.isAvailable) && !busy,
         fitsParty: fits,
         fare,
-        perKmUsd: vehicleFareFromSettings(settings, capacity),
+        perKmUsd: perKm,
         busyUntil: busyUntilByDriver.get(d._id.toString()) ?? null,
         bookedSlots: (slotsByDriver.get(d._id.toString()) ?? []).slice(0, 8),
       };
@@ -191,7 +197,10 @@ export async function listPublicVehicles(input: PublicVehiclesQuery) {
 
   return {
     fare: fromFare,
-    guestFare: vehicleFareFromSettings(settings, passengers <= 4 ? 4 : passengers <= 7 ? 7 : 10),
+    guestFare:
+      vehicles.length > 0
+        ? Math.min(...vehicles.map((v) => v.perKmUsd))
+        : vehicleFareFromSettings(settings, passengers <= 4 ? 4 : passengers <= 7 ? 7 : 10),
     passengers,
     distanceKm,
     durationMinutes,
@@ -227,6 +236,7 @@ export async function createTaxiBooking(
   } = input as CreateTaxiBookingInput & AdminCreateTaxiBookingInput;
 
   let vehicleCapacity: number | undefined;
+  let driverPerKm: number | undefined;
   if (requestedDriverId) {
     const driver = await Driver.findOne({ _id: requestedDriverId, isActive: true }).lean();
     if (!driver) {
@@ -236,9 +246,11 @@ export async function createTaxiBooking(
       throw new AppError(400, "Selected vehicle is too small for this party");
     }
     vehicleCapacity = Number(driver.passengerCapacity ?? 7);
+    const own = Number(driver.pricePerKmUsd);
+    if (Number.isFinite(own) && own > 0) driverPerKm = own;
   }
 
-  const estimate = await estimateFare(input, vehicleCapacity);
+  const estimate = await estimateFare(input, vehicleCapacity, driverPerKm);
   const pickupDate = toUtcDate(input.pickupDate);
 
   if (requestedDriverId) {

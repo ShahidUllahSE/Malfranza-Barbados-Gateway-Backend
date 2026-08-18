@@ -9,7 +9,7 @@ import { Apartment } from "../modules/apartments/apartment.model.js";
  * Room 2 · Island Breeze — 1-BR
  * Room 3 · Palm Retreat — 1-BR
  * Room 4 · Golden Serenity — 2-BR
- * Room A & B · Sunset Suite — 2-BR (combined)
+ * Sunset Suite — 2-BR (one listing, one rate)
  */
 
 const SHARED_AMENITIES = [
@@ -104,9 +104,9 @@ const apartments = [
   {
     name: "Sunset Suite",
     slug: "apartment-a-and-b",
-    subtitle: "Room A & B",
+    subtitle: "Two-bedroom",
     description:
-      "Sunset Suite — Room A and Room B at Malfranza, Oistins. Book either room on its own, or both together. Each unit has its own space; Starlink internet throughout.",
+      "Sunset Suite — a two-bedroom apartment at Malfranza, Oistins. Both rooms are included at one rate. Starlink internet throughout.",
     type: "two-bedroom" as const,
     pricePerNight: catalogFromRate("two-bedroom"),
     maxGuests: 4,
@@ -116,26 +116,7 @@ const apartments = [
     amenities: [...AMENITIES_2BR],
     isActive: true,
     unitsExclusive: false,
-    units: [
-      {
-        name: "Room A",
-        description: "Independently bookable room in Sunset Suite — one bedroom, private bathroom.",
-        bedrooms: 1,
-        bathrooms: 1,
-        maxGuests: 2,
-        pricePerNight: catalogFromRate("one-bedroom"),
-        isActive: true,
-      },
-      {
-        name: "Room B",
-        description: "Independently bookable room in Sunset Suite — one bedroom, private bathroom.",
-        bedrooms: 1,
-        bathrooms: 1,
-        maxGuests: 2,
-        pricePerNight: catalogFromRate("one-bedroom"),
-        isActive: true,
-      },
-    ],
+    units: [],
   },
 ];
 

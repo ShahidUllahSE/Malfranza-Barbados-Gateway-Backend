@@ -33,10 +33,6 @@ export const REGULATED_TAXI_FARES: TaxiFareSettings = {
 
 const DEFAULTS: TaxiFareSettings = REGULATED_TAXI_FARES;
 
-function money(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
 function toSettings(doc: {
   fareFor1to4?: number;
   fareFor5to7?: number;
@@ -106,9 +102,32 @@ export function vehicleFareFromSettings(settings: TaxiFareSettings, capacity: nu
   return settings.fareFor8to10;
 }
 
+/** Driver’s own $/km when set; otherwise the Settings rate for that van size. */
+export function perKmForDriver(
+  driver: { pricePerKmUsd?: number | null; passengerCapacity?: number | null },
+  settings: TaxiFareSettings,
+): number {
+  const own = Number(driver.pricePerKmUsd);
+  if (Number.isFinite(own) && own > 0) return own;
+  return vehicleFareFromSettings(settings, Number(driver.passengerCapacity) || 7);
+}
+
 /** @deprecated Prefer vehicleFareFromSettings — rates are by vehicle size, not party size. */
 export function guestFareFromSettings(settings: TaxiFareSettings, passengers: number): number {
   return vehicleFareFromSettings(settings, passengers);
+}
+
+function money(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+export function calculateFareFromPerKm(
+  settings: TaxiFareSettings,
+  distanceKm: number,
+  perKm: number,
+): number {
+  const total = Math.max(0, distanceKm) * perKm;
+  return Math.max(settings.minimumFareUsd, money(total));
 }
 
 /**
@@ -120,7 +139,5 @@ export function calculateFareFromSettings(
   distanceKm: number,
   capacity: number,
 ): number {
-  const perKm = vehicleFareFromSettings(settings, capacity);
-  const total = Math.max(0, distanceKm) * perKm;
-  return Math.max(settings.minimumFareUsd, money(total));
+  return calculateFareFromPerKm(settings, distanceKm, vehicleFareFromSettings(settings, capacity));
 }

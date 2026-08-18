@@ -13,10 +13,19 @@ export class AppError extends Error {
 }
 
 export const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
-  if (error instanceof multer.MulterError) {
-    response.status(400).json({
+  const payloadStatus = Number(error?.statusCode ?? error?.status ?? 0);
+  if (payloadStatus === 413 || error?.type === "entity.too.large") {
+    response.status(413).json({
       success: false,
-      message: error.code === "LIMIT_FILE_SIZE" ? "Image must be 8 MB or smaller" : error.message,
+      message: "That photo is too large. Try a smaller JPEG or PNG (under 20 MB).",
+    });
+    return;
+  }
+
+  if (error instanceof multer.MulterError) {
+    response.status(413).json({
+      success: false,
+      message: error.code === "LIMIT_FILE_SIZE" ? "Image must be 20 MB or smaller" : error.message,
     });
     return;
   }

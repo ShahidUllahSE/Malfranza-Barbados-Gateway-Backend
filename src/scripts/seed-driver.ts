@@ -12,6 +12,7 @@ const FLEET = [
     phone: "+1 246 555 0210",
     vehicleLabel: "XL — 7 seats",
     passengerCapacity: 7,
+    pricePerKmUsd: 2.4,
   },
   {
     name: "Malfranza Coach",
@@ -20,6 +21,7 @@ const FLEET = [
     phone: "+1 246 555 0200",
     vehicleLabel: "12-seater",
     passengerCapacity: 12,
+    pricePerKmUsd: 4,
   },
 ] as const;
 
@@ -31,6 +33,7 @@ async function upsertDriver(entry: (typeof FLEET)[number]) {
     existing.phone = entry.phone;
     existing.vehicleLabel = entry.vehicleLabel;
     existing.passengerCapacity = entry.passengerCapacity;
+    existing.pricePerKmUsd = entry.pricePerKmUsd;
     existing.isActive = true;
     existing.isAvailable = true;
     existing.passwordHash = passwordHash;
@@ -45,6 +48,7 @@ async function upsertDriver(entry: (typeof FLEET)[number]) {
     phone: entry.phone,
     vehicleLabel: entry.vehicleLabel,
     passengerCapacity: entry.passengerCapacity,
+    pricePerKmUsd: entry.pricePerKmUsd,
     passwordHash,
     isActive: true,
     isAvailable: true,

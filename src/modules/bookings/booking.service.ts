@@ -9,6 +9,7 @@ import {
   staySubtotalForUnits,
   combinedNightlyForUnits,
   catalogFromRate,
+  listingFromRate,
 } from "../apartments/pricing.js";
 import {
   AGENCY_COMMISSION_RATE,
@@ -198,11 +199,11 @@ export async function listApartmentOccupancy(input: {
       ? conflictsSearch.length === 0
       : !current;
 
-    const roomType: PricedRoomType =
-      apartment.type === "two-bedroom" || apartment.type === "three-bedroom"
-        ? "two-bedroom"
-        : "one-bedroom";
-    const fromRate = catalogFromRate(roomType);
+    const fromRate = listingFromRate({
+      type: apartment.type,
+      pricePerNight: apartment.pricePerNight,
+      units: apartment.units,
+    });
 
     return {
       apartmentId: key,

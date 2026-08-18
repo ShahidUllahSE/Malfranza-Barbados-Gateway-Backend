@@ -16,7 +16,7 @@ const allowedImageTypes = new Set([
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 20 * 1024 * 1024, files: 1 },
   fileFilter: (_request, file, callback) => {
     if (!allowedImageTypes.has(file.mimetype)) {
       callback(new AppError(415, "Only JPEG, PNG, WebP and AVIF images are allowed"));

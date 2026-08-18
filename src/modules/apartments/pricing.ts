@@ -25,6 +25,14 @@ export function roomTypeFromBedrooms(bedrooms: number): PricedRoomType {
   return bedrooms >= 2 ? "two-bedroom" : "one-bedroom";
 }
 
+export function roomTypeFromApartmentType(
+  type: string | undefined,
+): PricedRoomType {
+  return type === "two-bedroom" || type === "three-bedroom"
+    ? "two-bedroom"
+    : "one-bedroom";
+}
+
 export function nightlyRate(roomType: PricedRoomType, _isoDate?: string): number {
   return RATE_TABLE[roomType];
 }
@@ -91,4 +99,22 @@ export function staySubtotalForUnits(
   if (nights.length === 0 || units.length === 0) return 0;
   const nightly = combinedNightlyForUnits(units);
   return Math.round(nightly * nights.length * 100) / 100;
+}
+
+/** Public “from” price: cheapest bookable unit, otherwise the listing type rate. */
+export function listingFromRate(input: {
+  type?: string;
+  pricePerNight?: number | null;
+  units?: { bedrooms: number; pricePerNight?: number | null; isActive?: boolean }[] | null;
+}): number {
+  const units = (input.units ?? []).filter((unit) => unit.isActive !== false);
+  if (units.length > 0) {
+    return Math.min(
+      ...units.map((unit) => unitNightlyRate(unit.bedrooms, unit.pricePerNight)),
+    );
+  }
+  if (input.pricePerNight != null && Number(input.pricePerNight) > 0) {
+    return Number(input.pricePerNight);
+  }
+  return catalogFromRate(roomTypeFromApartmentType(input.type));
 }

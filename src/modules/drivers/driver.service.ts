@@ -5,6 +5,7 @@ import type { QueryFilter } from "mongoose";
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { TaxiBooking } from "../taxi/taxi.model.js";
+import { REGULATED_TAXI_FARES } from "../taxi/taxi-settings.service.js";
 import { Driver } from "./driver.model.js";
 import type {
   AdminDriverDetailQuery,
@@ -59,6 +60,47 @@ async function issueDriverToken(driver: AuthenticatedDriver): Promise<string> {
     .sign(jwtKey);
 }
 
+function defaultPricePerKm(capacity: number): number {
+  return capacity <= 7 ? REGULATED_TAXI_FARES.fareFor5to7 : REGULATED_TAXI_FARES.fareFor8to10;
+}
+
+function resolvedPricePerKm(driver: {
+  pricePerKmUsd?: number | null;
+  passengerCapacity?: number | null;
+}): number {
+  const own = Number(driver.pricePerKmUsd);
+  if (Number.isFinite(own) && own > 0) return own;
+  return defaultPricePerKm(Number(driver.passengerCapacity) || 4);
+}
+
+function toAdminDriver(driver: {
+  _id: { toString(): string };
+  name: string;
+  email: string;
+  phone: string;
+  vehicleLabel?: string | null;
+  passengerCapacity?: number | null;
+  pricePerKmUsd?: number | null;
+  isAvailable: boolean;
+  isActive: boolean;
+  lastLoginAt?: Date | null;
+  createdAt?: Date;
+}) {
+  return {
+    id: driver._id.toString(),
+    name: driver.name,
+    email: driver.email,
+    phone: driver.phone,
+    vehicleLabel: driver.vehicleLabel ?? null,
+    passengerCapacity: Number(driver.passengerCapacity ?? 4),
+    pricePerKmUsd: resolvedPricePerKm(driver),
+    isAvailable: driver.isAvailable,
+    isActive: driver.isActive,
+    lastLoginAt: driver.lastLoginAt ?? null,
+    createdAt: driver.createdAt,
+  };
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -70,12 +112,14 @@ function isDuplicateKey(error: unknown): boolean {
 export async function createDriver(input: CreateDriverInput) {
   try {
     const passwordHash = await bcrypt.hash(input.password, 12);
+    const capacity = input.passengerCapacity ?? 4;
     const driver = await Driver.create({
       name: input.name,
       email: input.email,
       phone: input.phone,
       vehicleLabel: input.vehicleLabel,
-      passengerCapacity: input.passengerCapacity ?? 4,
+      passengerCapacity: capacity,
+      pricePerKmUsd: input.pricePerKmUsd ?? defaultPricePerKm(capacity),
       isAvailable: input.isAvailable ?? true,
       passwordHash,
     });
@@ -119,18 +163,7 @@ export async function listDrivers(input: AdminDriverListQuery) {
   ]);
 
   return {
-    items: items.map((d) => ({
-      id: d._id.toString(),
-      name: d.name,
-      email: d.email,
-      phone: d.phone,
-      vehicleLabel: d.vehicleLabel ?? null,
-      passengerCapacity: Number(d.passengerCapacity ?? 4),
-      isAvailable: d.isAvailable,
-      isActive: d.isActive,
-      lastLoginAt: d.lastLoginAt ?? null,
-      createdAt: d.createdAt,
-    })),
+    items: items.map(toAdminDriver),
     pagination: {
       page: input.page,
       limit: input.limit,
@@ -148,6 +181,7 @@ export async function updateDriver(id: string, input: UpdateDriverInput) {
   if (input.phone !== undefined) driver.phone = input.phone;
   if (input.vehicleLabel !== undefined) driver.vehicleLabel = input.vehicleLabel ?? undefined;
   if (input.passengerCapacity !== undefined) driver.passengerCapacity = input.passengerCapacity;
+  if (input.pricePerKmUsd !== undefined) driver.pricePerKmUsd = input.pricePerKmUsd;
   if (input.isAvailable !== undefined) driver.isAvailable = input.isAvailable;
   if (input.isActive !== undefined) driver.isActive = input.isActive;
   if (input.password) driver.passwordHash = await bcrypt.hash(input.password, 12);
@@ -413,18 +447,7 @@ export async function getAdminDriverDetail(id: string, query: AdminDriverDetailQ
     .lean();
 
   return {
-    driver: {
-      id: driver._id.toString(),
-      name: driver.name,
-      email: driver.email,
-      phone: driver.phone,
-      vehicleLabel: driver.vehicleLabel ?? null,
-      passengerCapacity: Number(driver.passengerCapacity ?? 4),
-      isAvailable: driver.isAvailable,
-      isActive: driver.isActive,
-      lastLoginAt: driver.lastLoginAt ?? null,
-      createdAt: driver.createdAt,
-    },
+    driver: toAdminDriver(driver),
     stats,
     trips: trips.map(mapAdminTrip),
     filters: {
@@ -447,6 +470,7 @@ export async function listAvailableDrivers() {
     phone: d.phone,
     vehicleLabel: d.vehicleLabel ?? null,
     passengerCapacity: Number(d.passengerCapacity ?? 4),
+    pricePerKmUsd: resolvedPricePerKm(d),
     isAvailable: d.isAvailable,
   }));
 }
