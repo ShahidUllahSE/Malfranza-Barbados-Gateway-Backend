@@ -388,7 +388,7 @@ export async function resetAgencyPassword(token: string, newPassword: string) {
 export async function loginAgency(input: LoginAgencyInput) {
   const email = input.email.trim().toLowerCase();
   const agency = await TravelAgency.findOne({ email }).select("+passwordHash");
-  if (!agency || !agency.isActive) {
+  if (!agency || !agency.isActive || agency.deletedAt) {
     throw new AppError(401, "Invalid email or password");
   }
 
@@ -520,7 +520,9 @@ export async function getAgencyCommissionSummary(agencyId: string) {
 }
 
 export async function listAgenciesAdmin() {
-  const agencies = await TravelAgency.find()
+  const agencies = await TravelAgency.find({
+    $or: [{ deletedAt: { $exists: false } }, { deletedAt: null }],
+  })
     .sort({ createdAt: -1 })
     .lean();
 

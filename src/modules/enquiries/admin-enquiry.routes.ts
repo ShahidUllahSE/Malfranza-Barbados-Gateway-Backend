@@ -10,7 +10,7 @@ import {
 export const adminEnquiryRouter = Router();
 
 adminEnquiryRouter.use(authenticateAdmin);
-adminEnquiryRouter.use(requireRole("admin", "staff"));
+adminEnquiryRouter.use(requireRole("admin"));
 
 adminEnquiryRouter.get("/", getAdminEnquiries);
 adminEnquiryRouter.get("/:id", getAdminEnquiry);

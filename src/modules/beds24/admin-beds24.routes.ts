@@ -9,7 +9,7 @@ import {
 export const adminBeds24Router = Router();
 
 adminBeds24Router.use(authenticateAdmin);
-adminBeds24Router.use(requireRole("admin", "staff"));
+adminBeds24Router.use(requireRole("admin"));
 
 adminBeds24Router.get("/status", getBeds24Status);
 adminBeds24Router.get("/properties", getBeds24Properties);

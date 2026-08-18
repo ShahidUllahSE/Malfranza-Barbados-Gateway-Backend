@@ -5,7 +5,7 @@ import { getAdminRefunds, patchAdminRefund } from "./admin-refund.controller.js"
 export const adminRefundRouter = Router();
 
 adminRefundRouter.use(authenticateAdmin);
-adminRefundRouter.use(requireRole("admin", "staff"));
+adminRefundRouter.use(requireRole("admin"));
 
 adminRefundRouter.get("/", getAdminRefunds);
 adminRefundRouter.patch("/:kind/:id", requireRole("admin"), patchAdminRefund);

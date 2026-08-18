@@ -14,7 +14,7 @@ import {
 export const adminTaxiRouter = Router();
 
 adminTaxiRouter.use(authenticateAdmin);
-adminTaxiRouter.use(requireRole("admin", "staff"));
+adminTaxiRouter.use(requireRole("admin"));
 
 adminTaxiRouter.get("/", getAdminTaxiBookings);
 adminTaxiRouter.post("/", postAdminTaxiBooking);

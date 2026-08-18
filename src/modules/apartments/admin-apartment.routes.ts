@@ -11,7 +11,7 @@ import {
 export const adminApartmentRouter = Router();
 
 adminApartmentRouter.use(authenticateAdmin);
-adminApartmentRouter.use(requireRole("admin", "staff"));
+adminApartmentRouter.use(requireRole("admin"));
 
 adminApartmentRouter.get("/", getAdminApartments);
 adminApartmentRouter.get("/:id", getAdminApartmentById);

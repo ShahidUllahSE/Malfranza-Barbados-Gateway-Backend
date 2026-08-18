@@ -98,9 +98,18 @@ export async function listDrivers(input: AdminDriverListQuery) {
   if (input.isActive !== undefined) filter.isActive = input.isActive;
   if (input.isAvailable !== undefined) filter.isAvailable = input.isAvailable;
 
+  const notDeleted = {
+    $or: [{ deletedAt: { $exists: false } }, { deletedAt: null }],
+  };
+
   if (input.search) {
     const search = new RegExp(escapeRegExp(input.search), "i");
-    filter.$or = [{ name: search }, { email: search }, { phone: search }, { vehicleLabel: search }];
+    filter.$and = [
+      notDeleted,
+      { $or: [{ name: search }, { email: search }, { phone: search }, { vehicleLabel: search }] },
+    ];
+  } else {
+    Object.assign(filter, notDeleted);
   }
 
   const skip = (input.page - 1) * input.limit;
@@ -184,7 +193,7 @@ export async function loginDriver(input: DriverLoginInput) {
   const passwordHash = driver?.passwordHash ?? (await dummyHashPromise);
   const validPassword = await bcrypt.compare(input.password, passwordHash);
 
-  if (!driver || !validPassword || !driver.isActive) {
+  if (!driver || !validPassword || !driver.isActive || driver.deletedAt) {
     throw new AppError(401, "Invalid email or password");
   }
 

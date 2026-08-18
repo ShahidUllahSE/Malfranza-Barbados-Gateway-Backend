@@ -14,11 +14,12 @@ const adminSchema = new Schema(
     role: {
       type: String,
       enum: ["admin", "staff"],
-      default: "staff",
+      default: "admin",
       required: true,
     },
     isActive: { type: Boolean, default: true, required: true },
     lastLoginAt: { type: Date },
+    deletedAt: { type: Date, default: null, index: true },
   },
   {
     timestamps: true,

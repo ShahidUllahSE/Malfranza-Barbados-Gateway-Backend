@@ -18,6 +18,7 @@ const driverSchema = new Schema(
     isAvailable: { type: Boolean, default: true, required: true, index: true },
     isActive: { type: Boolean, default: true, required: true, index: true },
     lastLoginAt: { type: Date },
+    deletedAt: { type: Date, default: null, index: true },
   },
   {
     timestamps: true,

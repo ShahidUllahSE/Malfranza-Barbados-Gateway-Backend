@@ -110,13 +110,13 @@ export async function listAdminRefunds(query: AdminRefundListQuery) {
       ? Promise.resolve([])
       : Booking.find(stayFilter as any)
           .sort({ refundRequestedAt: -1, cancelledAt: -1 })
-          .limit(100)
+          .limit(500)
           .lean(),
     query.kind === "stay"
       ? Promise.resolve([])
       : TaxiBooking.find(taxiFilter as any)
           .sort({ refundRequestedAt: -1, cancelledAt: -1 })
-          .limit(100)
+          .limit(500)
           .lean(),
   ]);
 

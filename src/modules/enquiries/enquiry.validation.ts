@@ -33,7 +33,7 @@ export const createEnquirySchema = z
 export const adminEnquiryListQuerySchema = z
   .object({
     page: z.coerce.number().int().min(1).default(1),
-    limit: z.coerce.number().int().min(1).max(100).default(20),
+    limit: z.coerce.number().int().min(1).max(500).default(20),
     status: z.enum(["new", "responded", "closed"]).optional(),
     interestedIn: z.enum(["Apartment Stay", "Taxi Service", "Both", "Other"]).optional(),
     search: z.string().trim().max(120).optional(),

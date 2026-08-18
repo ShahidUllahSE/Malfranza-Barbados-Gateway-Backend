@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { jwtVerify, SignJWT } from "jose";
+import mongoose from "mongoose";
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { loginUser, type AuthenticatedUser } from "../users/user.service.js";
@@ -12,7 +13,7 @@ import {
 import { TravelAgency } from "../agencies/agency.model.js";
 import { Admin } from "./admin.model.js";
 import { Driver } from "../drivers/driver.model.js";
-import type { BootstrapAdminInput, LoginInput } from "./auth.validation.js";
+import type { BootstrapAdminInput, CreateAdminAccountInput, LoginInput } from "./auth.validation.js";
 
 const jwtKey = new TextEncoder().encode(env.JWT_SECRET);
 const dummyHashPromise = bcrypt.hash(randomUUID(), 12);
@@ -95,11 +96,12 @@ export async function bootstrapAdmin(input: BootstrapAdminInput) {
 }
 
 export async function login(input: LoginInput) {
+  await promoteStaffAccountsToAdmin();
   const admin = await Admin.findOne({ email: input.email }).select("+passwordHash");
   const passwordHash = admin?.passwordHash ?? (await dummyHashPromise);
   const validPassword = await bcrypt.compare(input.password, passwordHash);
 
-  if (!admin || !validPassword || !admin.isActive) {
+  if (!admin || !validPassword || !admin.isActive || admin.deletedAt) {
     throw new AppError(401, "Invalid email or password");
   }
 
@@ -154,18 +156,108 @@ export async function verifyAdminToken(token: string): Promise<AuthenticatedAdmi
     const admin = await Admin.findOne({
       _id: payload.sub,
       isActive: true,
-    }).lean();
+    });
 
     if (!admin) {
       throw new Error("Admin no longer active");
     }
 
+    if (admin.role === "staff") {
+      admin.role = "admin";
+      await admin.save();
+    }
+
     return {
       id: admin._id.toString(),
       email: admin.email,
-      role: admin.role,
+      role: "admin" as const,
     };
   } catch {
     throw new AppError(401, "Invalid or expired access token");
   }
+}
+
+async function promoteStaffAccountsToAdmin() {
+  await Admin.updateMany({ role: "staff" }, { $set: { role: "admin" } });
+}
+
+export async function createAdminAccount(input: CreateAdminAccountInput) {
+  await promoteStaffAccountsToAdmin();
+  const email = input.email.trim().toLowerCase();
+  const existing = await Admin.findOne({ email }).lean();
+  if (existing) {
+    throw new AppError(409, "An admin account with this email already exists");
+  }
+
+  const passwordHash = await bcrypt.hash(input.password, 12);
+  const admin = await Admin.create({
+    email,
+    passwordHash,
+    role: "admin",
+    isActive: true,
+  });
+
+  return {
+    id: admin.id,
+    email: admin.email,
+    role: admin.role,
+    isActive: admin.isActive,
+    createdAt: admin.createdAt,
+    lastLoginAt: admin.lastLoginAt ?? null,
+  };
+}
+
+export async function listAdminAccounts() {
+  await promoteStaffAccountsToAdmin();
+  const admins = await Admin.find({
+    $or: [{ deletedAt: { $exists: false } }, { deletedAt: null }],
+  })
+    .sort({ createdAt: 1 })
+    .lean();
+  return admins.map((admin) => ({
+    id: admin._id.toString(),
+    email: admin.email,
+    role: admin.role,
+    isActive: admin.isActive,
+    createdAt: admin.createdAt,
+    lastLoginAt: admin.lastLoginAt ?? null,
+  }));
+}
+
+export async function setAdminAccountActive(
+  adminId: string,
+  isActive: boolean,
+  actorId: string,
+) {
+  if (!mongoose.Types.ObjectId.isValid(adminId)) {
+    throw new AppError(400, "Invalid admin ID");
+  }
+  if (adminId === actorId && !isActive) {
+    throw new AppError(400, "You cannot deactivate your own account");
+  }
+
+  const admin = await Admin.findById(adminId);
+  if (!admin) throw new AppError(404, "Admin not found");
+
+  if (!isActive && admin.role === "admin") {
+    const otherActiveAdmins = await Admin.countDocuments({
+      _id: { $ne: admin._id },
+      role: "admin",
+      isActive: true,
+      $or: [{ deletedAt: { $exists: false } }, { deletedAt: null }],
+    });
+    if (otherActiveAdmins === 0) {
+      throw new AppError(400, "Keep at least one active admin");
+    }
+  }
+
+  admin.isActive = isActive;
+  await admin.save();
+
+  return {
+    id: admin.id,
+    email: admin.email,
+    role: admin.role,
+    isActive: admin.isActive,
+  };
 }

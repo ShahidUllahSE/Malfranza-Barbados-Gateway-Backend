@@ -31,6 +31,7 @@ const travelAgencySchema = new Schema(
     commissionRate: { type: Number, required: true, min: 0, max: 1, default: 0.1 },
     isActive: { type: Boolean, default: true, required: true },
     lastLoginAt: { type: Date },
+    deletedAt: { type: Date, default: null, index: true },
   },
   {
     timestamps: true,

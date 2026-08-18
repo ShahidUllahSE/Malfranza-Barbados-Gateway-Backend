@@ -18,6 +18,8 @@ import { agencyRouter } from "../modules/agencies/agency.routes.js";
 import { adminAgencyRouter } from "../modules/agencies/admin-agency.routes.js";
 import { paymentRouter } from "../modules/payments/payment.routes.js";
 import { adminNotificationRouter } from "../modules/notifications/admin-notification.routes.js";
+import { adminAccountRouter } from "../modules/auth/admin-account.routes.js";
+import { adminUserRouter } from "../modules/users/admin-user.routes.js";
 
 export const apiRouter = Router();
 
@@ -46,5 +48,7 @@ apiRouter.use("/admin/taxi", adminTaxiRouter);
 apiRouter.use("/admin/drivers", adminDriverRouter);
 apiRouter.use("/admin/enquiries", adminEnquiryRouter);
 apiRouter.use("/admin/notifications", adminNotificationRouter);
+apiRouter.use("/admin/admins", adminAccountRouter);
+apiRouter.use("/admin/users", adminUserRouter);
 apiRouter.use("/admin/media", mediaRouter);
 apiRouter.use("/admin/beds24", adminBeds24Router);

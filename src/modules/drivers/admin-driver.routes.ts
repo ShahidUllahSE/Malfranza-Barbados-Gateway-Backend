@@ -12,7 +12,7 @@ import {
 export const adminDriverRouter = Router();
 
 adminDriverRouter.use(authenticateAdmin);
-adminDriverRouter.use(requireRole("admin", "staff"));
+adminDriverRouter.use(requireRole("admin"));
 
 adminDriverRouter.get("/", getAdminDrivers);
 adminDriverRouter.get("/available", getAdminAvailableDrivers);

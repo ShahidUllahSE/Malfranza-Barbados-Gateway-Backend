@@ -29,7 +29,7 @@ const upload = multer({
 export const mediaRouter = Router();
 
 mediaRouter.use(authenticateAdmin);
-mediaRouter.use(requireRole("admin", "staff"));
+mediaRouter.use(requireRole("admin"));
 
 mediaRouter.post("/images", upload.single("image"), postApartmentImage);
 mediaRouter.delete("/images", requireRole("admin"), deleteApartmentImage);

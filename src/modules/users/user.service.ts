@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { jwtVerify, SignJWT } from "jose";
+import mongoose from "mongoose";
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { evaluateCancellation } from "../bookings/cancellation.js";
@@ -333,7 +334,7 @@ export async function loginUser(input: LoginUserInput) {
   const passwordHash = user?.passwordHash ?? (await dummyHashPromise);
   const validPassword = await bcrypt.compare(input.password, passwordHash);
 
-  if (!user || !validPassword || !user.isActive) {
+  if (!user || !validPassword || !user.isActive || user.deletedAt) {
     throw new AppError(401, "Invalid email or password");
   }
 
@@ -504,4 +505,57 @@ export async function resetUserPassword(token: string, newPassword: string) {
   user.mustChangePassword = false;
   await user.save();
   return { ok: true as const };
+}
+
+export async function listGuestUsersAdmin() {
+  const users = await User.find().sort({ createdAt: -1 }).limit(500).lean();
+  const ids = users.map((user) => user._id);
+
+  const [stayCounts, taxiCounts] =
+    ids.length === 0
+      ? [[], []]
+      : await Promise.all([
+          Booking.aggregate<{ _id: unknown; count: number }>([
+            { $match: { userId: { $in: ids } } },
+            { $group: { _id: "$userId", count: { $sum: 1 } } },
+          ]),
+          TaxiBooking.aggregate<{ _id: unknown; count: number }>([
+            { $match: { userId: { $in: ids } } },
+            { $group: { _id: "$userId", count: { $sum: 1 } } },
+          ]),
+        ]);
+
+  const stays = new Map(stayCounts.map((row) => [String(row._id), row.count]));
+  const taxis = new Map(taxiCounts.map((row) => [String(row._id), row.count]));
+
+  return users.map((user) => ({
+    id: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    phone: user.phone ?? null,
+    accountSource: user.accountSource ?? "self",
+    isActive: user.isActive,
+    deletedAt: user.deletedAt ? user.deletedAt.toISOString() : null,
+    stayBookings: stays.get(user._id.toString()) ?? 0,
+    taxiBookings: taxis.get(user._id.toString()) ?? 0,
+    lastLoginAt: user.lastLoginAt ? user.lastLoginAt.toISOString() : null,
+    createdAt: user.createdAt.toISOString(),
+  }));
+}
+
+export async function setGuestUserActive(userId: string, isActive: boolean) {
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    throw new AppError(400, "Invalid user ID");
+  }
+  const user = await User.findByIdAndUpdate(
+    userId,
+    { $set: { isActive } },
+    { new: true },
+  ).lean();
+  if (!user) throw new AppError(404, "User not found");
+  return {
+    id: user._id.toString(),
+    email: user.email,
+    isActive: user.isActive,
+  };
 }

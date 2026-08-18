@@ -24,6 +24,7 @@ const userSchema = new Schema(
     mustChangePassword: { type: Boolean, default: false, required: true },
     isActive: { type: Boolean, default: true, required: true },
     lastLoginAt: { type: Date },
+    deletedAt: { type: Date, default: null, index: true },
   },
   {
     timestamps: true,

@@ -11,7 +11,7 @@ import {
 
 export const adminAgencyRouter = Router();
 
-adminAgencyRouter.use(authenticateAdmin, requireRole("admin", "staff"));
+adminAgencyRouter.use(authenticateAdmin, requireRole("admin"));
 adminAgencyRouter.get("/", getAdminAgencies);
 adminAgencyRouter.post("/", postAdminCreateAgency);
 adminAgencyRouter.get("/commission", getAdminAgencyCommission);

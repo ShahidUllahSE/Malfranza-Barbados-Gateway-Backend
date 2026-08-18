@@ -9,7 +9,7 @@ import {
 export const adminNotificationRouter = Router();
 
 adminNotificationRouter.use(authenticateAdmin);
-adminNotificationRouter.use(requireRole("admin", "staff"));
+adminNotificationRouter.use(requireRole("admin"));
 
 adminNotificationRouter.get("/", getAdminNotifications);
 adminNotificationRouter.post("/read-all", postAdminNotificationsReadAll);

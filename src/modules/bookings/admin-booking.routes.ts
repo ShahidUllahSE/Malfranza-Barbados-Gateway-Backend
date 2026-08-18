@@ -12,7 +12,7 @@ import {
 export const adminBookingRouter = Router();
 
 adminBookingRouter.use(authenticateAdmin);
-adminBookingRouter.use(requireRole("admin", "staff"));
+adminBookingRouter.use(requireRole("admin"));
 
 adminBookingRouter.get("/", getAdminBookings);
 adminBookingRouter.post("/", postAdminBooking);
