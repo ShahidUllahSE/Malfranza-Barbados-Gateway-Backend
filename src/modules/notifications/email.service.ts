@@ -127,6 +127,36 @@ export function isSmtpReady() {
 
 /* ========== GROUP 1 — Guest ========== */
 
+export async function sendAgencySignupOtpEmail(input: {
+  to: string;
+  name: string;
+  agencyName: string;
+  code: string;
+  expiresMinutes: number;
+}) {
+  const greeter = firstName(input.name);
+  return mail(
+    input.to,
+    "Verify your Malfranza travel agent account",
+    [
+      `Hi ${greeter},`,
+      "",
+      `Please confirm your email to finish creating the travel agent account for ${input.agencyName}.`,
+      "",
+      `Your verification code is: ${input.code}`,
+      "",
+      `Enter this code on the site. It expires in ${input.expiresMinutes} minutes.`,
+      "If you didn't request a travel agent account, you can safely ignore this email.",
+    ],
+    `<p>Hi ${escapeHtml(greeter)},</p>
+     <p>Please confirm your email to finish creating the travel agent account for <strong>${escapeHtml(input.agencyName)}</strong>.</p>
+     <p>Your verification code is:</p>
+     <p style="font-size:28px;letter-spacing:0.18em;font-weight:700;margin:18px 0;color:#2D5A3D;">${escapeHtml(input.code)}</p>
+     <p style="font-size:13px;color:#4a5a5a;">Enter this code on the site. The code expires in ${input.expiresMinutes} minutes.</p>
+     <p style="font-size:13px;color:#4a5a5a;">If you didn't request a travel agent account, you can safely ignore this email.</p>`,
+  );
+}
+
 export async function sendSignupOtpEmail(input: {
   to: string;
   name: string;

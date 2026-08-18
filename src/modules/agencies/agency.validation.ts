@@ -8,9 +8,21 @@ const credentials = {
 export const registerAgencySchema = z.object({
   agencyName: z.string().trim().min(2).max(160),
   contactName: z.string().trim().min(2).max(120),
-  email: z.email().max(254),
+  email: z.email().max(254).transform((value) => value.toLowerCase()),
   phone: z.string().trim().min(6).max(40),
   password: z.string().min(8).max(128),
+});
+
+export const verifyAgencySignupOtpSchema = z.object({
+  email: z.email().max(254).transform((value) => value.toLowerCase()),
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Enter the 6-digit code from your email"),
+});
+
+export const resendAgencySignupOtpSchema = z.object({
+  email: z.email().max(254).transform((value) => value.toLowerCase()),
 });
 
 export const loginAgencySchema = z.object(credentials);
@@ -44,3 +56,5 @@ export const agencyCommissionQuerySchema = z
 export type RegisterAgencyInput = z.infer<typeof registerAgencySchema>;
 export type LoginAgencyInput = z.infer<typeof loginAgencySchema>;
 export type AgencyCommissionQuery = z.infer<typeof agencyCommissionQuerySchema>;
+export type VerifyAgencySignupOtpInput = z.infer<typeof verifyAgencySignupOtpSchema>;
+export type ResendAgencySignupOtpInput = z.infer<typeof resendAgencySignupOtpSchema>;

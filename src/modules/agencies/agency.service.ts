@@ -1,11 +1,14 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { jwtVerify, SignJWT } from "jose";
 import mongoose, { Types, type QueryFilter } from "mongoose";
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
 import { Booking, type BookingRecord } from "../bookings/booking.model.js";
+import { createAdminNotification } from "../notifications/admin-notification.service.js";
 import {
+  sendAdminNewAgencySignupEmail,
+  sendAgencySignupOtpEmail,
   sendAgencyWelcomeEmail,
   sendPasswordResetEmail,
 } from "../notifications/email.service.js";
@@ -13,14 +16,31 @@ import {
   AGENCY_COMMISSION_RATE,
   TravelAgency,
 } from "./agency.model.js";
+import { AgencySignupOtp } from "./agency-signup-otp.model.js";
 import { getDefaultCommissionRate } from "./agency-settings.service.js";
 import type {
   AgencyCommissionQuery,
   LoginAgencyInput,
   RegisterAgencyInput,
+  ResendAgencySignupOtpInput,
+  VerifyAgencySignupOtpInput,
 } from "./agency.validation.js";
 
 const jwtKey = new TextEncoder().encode(env.JWT_SECRET);
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_EXPIRES_MINUTES = 10;
+
+function hashOtpCode(email: string, code: string) {
+  return createHash("sha256")
+    .update(`${email}:${code}:${env.JWT_SECRET}`)
+    .digest("hex");
+}
+
+function generateOtpCode() {
+  return String(randomInt(0, 1_000_000)).padStart(6, "0");
+}
 
 export type AuthenticatedAgency = {
   id: string;
@@ -116,7 +136,203 @@ export async function createAgencyByAdmin(input: RegisterAgencyInput) {
   return { agency: identity };
 }
 
-/** @deprecated Public self-signup — prefer createAgencyByAdmin */
+/**
+ * Public self-signup step 1 — store pending agency profile and email a 6-digit OTP.
+ * Account is only created after verifyAgencySignupOtp.
+ */
+export async function startAgencySignupWithOtp(input: RegisterAgencyInput) {
+  const email = input.email.trim().toLowerCase();
+  const existing = await TravelAgency.findOne({ email }).lean();
+  if (existing) {
+    throw new AppError(409, "An agency account with this email already exists");
+  }
+
+  const pending = await AgencySignupOtp.findOne({ email });
+  if (pending?.lastSentAt) {
+    const waitMs = OTP_RESEND_COOLDOWN_MS - (Date.now() - pending.lastSentAt.getTime());
+    if (waitMs > 0) {
+      throw new AppError(
+        429,
+        `Please wait ${Math.ceil(waitMs / 1000)}s before requesting another code`,
+      );
+    }
+  }
+
+  const code = generateOtpCode();
+  const passwordHash = await bcrypt.hash(input.password, 12);
+  const now = new Date();
+
+  await AgencySignupOtp.findOneAndUpdate(
+    { email },
+    {
+      $set: {
+        agencyName: input.agencyName.trim(),
+        contactName: input.contactName.trim(),
+        phone: input.phone.trim(),
+        passwordHash,
+        codeHash: hashOtpCode(email, code),
+        attempts: 0,
+        lastSentAt: now,
+        expiresAt: new Date(now.getTime() + OTP_TTL_MS),
+      },
+    },
+    { upsert: true, new: true },
+  );
+
+  const mail = await sendAgencySignupOtpEmail({
+    to: email,
+    name: input.contactName.trim(),
+    agencyName: input.agencyName.trim(),
+    code,
+    expiresMinutes: OTP_EXPIRES_MINUTES,
+  });
+
+  return {
+    email,
+    expiresInSeconds: Math.floor(OTP_TTL_MS / 1000),
+    emailSent: mail.sent,
+    message: mail.sent
+      ? "We sent a verification code to your email."
+      : "Verification code prepared (SMTP not configured — check server logs in development).",
+  };
+}
+
+export async function resendAgencySignupOtp(input: ResendAgencySignupOtpInput) {
+  const email = input.email.trim().toLowerCase();
+  const pending = await AgencySignupOtp.findOne({ email });
+  if (!pending) {
+    throw new AppError(404, "No pending signup found for this email. Start signup again.");
+  }
+
+  if (pending.expiresAt.getTime() < Date.now()) {
+    await AgencySignupOtp.deleteOne({ _id: pending._id });
+    throw new AppError(410, "Your signup session expired. Please start again.");
+  }
+
+  const waitMs = OTP_RESEND_COOLDOWN_MS - (Date.now() - pending.lastSentAt.getTime());
+  if (waitMs > 0) {
+    throw new AppError(
+      429,
+      `Please wait ${Math.ceil(waitMs / 1000)}s before requesting another code`,
+    );
+  }
+
+  const code = generateOtpCode();
+  pending.codeHash = hashOtpCode(email, code);
+  pending.attempts = 0;
+  pending.lastSentAt = new Date();
+  pending.expiresAt = new Date(Date.now() + OTP_TTL_MS);
+  await pending.save();
+
+  const mail = await sendAgencySignupOtpEmail({
+    to: email,
+    name: pending.contactName,
+    agencyName: pending.agencyName,
+    code,
+    expiresMinutes: OTP_EXPIRES_MINUTES,
+  });
+
+  return {
+    email,
+    expiresInSeconds: Math.floor(OTP_TTL_MS / 1000),
+    emailSent: mail.sent,
+    message: mail.sent
+      ? "A new verification code was sent to your email."
+      : "New code prepared (SMTP not configured — check server logs in development).",
+  };
+}
+
+/** Public self-signup step 2 — verify OTP and create the agency account. */
+export async function verifyAgencySignupOtp(input: VerifyAgencySignupOtpInput) {
+  const email = input.email.trim().toLowerCase();
+  const pending = await AgencySignupOtp.findOne({ email });
+  if (!pending) {
+    throw new AppError(404, "No pending signup found. Please start signup again.");
+  }
+
+  if (pending.expiresAt.getTime() < Date.now()) {
+    await AgencySignupOtp.deleteOne({ _id: pending._id });
+    throw new AppError(410, "Verification code expired. Please start signup again.");
+  }
+
+  if (pending.attempts >= OTP_MAX_ATTEMPTS) {
+    await AgencySignupOtp.deleteOne({ _id: pending._id });
+    throw new AppError(429, "Too many incorrect codes. Please start signup again.");
+  }
+
+  const expected = hashOtpCode(email, input.code);
+  if (expected !== pending.codeHash) {
+    pending.attempts += 1;
+    await pending.save();
+    const left = OTP_MAX_ATTEMPTS - pending.attempts;
+    throw new AppError(
+      400,
+      left > 0
+        ? `Invalid code. ${left} attempt${left === 1 ? "" : "s"} remaining.`
+        : "Too many incorrect codes. Please start signup again.",
+    );
+  }
+
+  const existing = await TravelAgency.findOne({ email }).lean();
+  if (existing) {
+    await AgencySignupOtp.deleteOne({ _id: pending._id });
+    throw new AppError(409, "An agency account with this email already exists");
+  }
+
+  const agencyCode = await generateUniqueAgencyCode();
+  const commissionRate = await getDefaultCommissionRate();
+  const agency = await TravelAgency.create({
+    agencyName: pending.agencyName,
+    contactName: pending.contactName,
+    email,
+    phone: pending.phone,
+    passwordHash: pending.passwordHash,
+    agencyCode,
+    commissionRate,
+    isActive: true,
+  });
+
+  await AgencySignupOtp.deleteOne({ _id: pending._id });
+
+  const identity = toIdentity(agency);
+
+  await Promise.all([
+    sendAgencyWelcomeEmail({
+      to: agency.email,
+      contactName: agency.contactName,
+      agencyName: agency.agencyName,
+      agencyCode: agency.agencyCode,
+      commissionRate,
+    }).catch((error) => {
+      console.error("[email] Failed to send agency welcome", error);
+    }),
+    sendAdminNewAgencySignupEmail({
+      agencyName: agency.agencyName,
+      contactName: agency.contactName,
+      email: agency.email,
+      phone: agency.phone,
+      agencyCode: agency.agencyCode,
+    }).catch((error) => {
+      console.error("[email] Failed to send admin agency signup", error);
+    }),
+    createAdminNotification({
+      type: "agency_signup",
+      title: `New travel agent — ${agency.agencyName}`,
+      body: `${agency.contactName} · ${agency.email} · ${agency.agencyCode}`,
+      href: "/admin/agencies",
+      entityId: identity.id,
+    }).catch((error) => {
+      console.error("[notify] Failed to create agency signup notification", error);
+    }),
+  ]);
+
+  return {
+    agency: identity,
+    token: await issueAgencyToken(identity),
+  };
+}
+
+/** @deprecated Admin-created agencies — use createAgencyByAdmin */
 export async function registerAgency(input: RegisterAgencyInput) {
   return createAgencyByAdmin(input);
 }

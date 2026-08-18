@@ -5,18 +5,42 @@ import {
   listAgencyBookings,
   loginAgency,
   requestAgencyPasswordReset,
+  resendAgencySignupOtp,
   resetAgencyPassword,
+  startAgencySignupWithOtp,
+  verifyAgencySignupOtp,
 } from "./agency.service.js";
 import { getAgencyCommissionSettings } from "./agency-settings.service.js";
 import {
   agencyPasswordResetConfirmSchema,
   agencyPasswordResetRequestSchema,
   loginAgencySchema,
+  registerAgencySchema,
+  resendAgencySignupOtpSchema,
+  verifyAgencySignupOtpSchema,
 } from "./agency.validation.js";
 
 export const getPublicAgencyCommissionRate: RequestHandler = async (_request, response) => {
   const settings = await getAgencyCommissionSettings();
   response.status(200).json({ success: true, data: settings });
+};
+
+export const postRegisterAgency: RequestHandler = async (request, response) => {
+  const input = registerAgencySchema.parse(request.body);
+  const result = await startAgencySignupWithOtp(input);
+  response.status(200).json({ success: true, data: result });
+};
+
+export const postVerifyAgencySignupOtp: RequestHandler = async (request, response) => {
+  const input = verifyAgencySignupOtpSchema.parse(request.body);
+  const result = await verifyAgencySignupOtp(input);
+  response.status(201).json({ success: true, data: result });
+};
+
+export const postResendAgencySignupOtp: RequestHandler = async (request, response) => {
+  const input = resendAgencySignupOtpSchema.parse(request.body);
+  const result = await resendAgencySignupOtp(input);
+  response.status(200).json({ success: true, data: result });
 };
 
 export const postLoginAgency: RequestHandler = async (request, response) => {
