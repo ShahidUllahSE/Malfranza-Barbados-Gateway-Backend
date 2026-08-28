@@ -109,6 +109,14 @@ const bookingSchema = new Schema(
     commissionRate: { type: Number, min: 0, max: 1 },
     /** 10% of stay subtotal when agency-sourced (excludes taxi). */
     commissionAmount: { type: Number, min: 0, default: 0 },
+    /** Where this booking came from — a real website booking, or synced in from a channel manager. */
+    source: { type: String, enum: ["direct", "beds24"], default: "direct", index: true },
+    /** OTA name as reported by Beds24 (e.g. "expedia"), set only when source is "beds24". */
+    externalChannel: { type: String, trim: true, maxlength: 60 },
+    /** Beds24 booking id, used to upsert/dedupe on each sync run (set when source is "beds24"). */
+    externalBookingId: { type: String, trim: true, index: true, unique: true, sparse: true },
+    /** Beds24 booking id created when this direct/website booking was pushed out to Beds24. */
+    beds24BookingId: { type: String, trim: true },
   },
   {
     timestamps: true,

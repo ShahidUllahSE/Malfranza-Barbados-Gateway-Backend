@@ -15,6 +15,7 @@
     "seed:admin": "tsx src/scripts/seed-admin.ts",
     "seed:taxi-fares": "tsx src/scripts/seed-taxi-fares.ts",
     "reminders:run": "tsx src/scripts/run-reminders.ts",
+    "beds24:check": "tsx src/scripts/check-beds24.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
     "jose": "^6.2.3",
     "mongoose": "^9.7.4",
     "multer": "^2.2.0",
+    "node-cron": "^4.6.0",
     "nodemailer": "^9.0.3",
     "zod": "^4.4.3"
   },

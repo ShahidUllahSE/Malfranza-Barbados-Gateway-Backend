@@ -3,6 +3,10 @@ import mongoose, { Types, type ClientSession, type QueryFilter } from "mongoose"
 import { AppError } from "../../middleware/error-handler.js";
 import { Apartment } from "../apartments/apartment.model.js";
 import {
+  cancelDirectBookingInBeds24,
+  pushDirectBookingToBeds24,
+} from "../beds24/beds24-push.service.js";
+import {
   type PricedRoomType,
   roomTypeFromBedrooms,
   staySubtotal,
@@ -449,6 +453,10 @@ export async function createBooking(input: CreateBookingInput, userId?: string) 
       throw new AppError(500, "Booking could not be created");
     }
 
+    pushDirectBookingToBeds24(String(createdBooking._id)).catch((error) => {
+      console.error("[beds24-push] Unexpected error pushing new booking", error);
+    });
+
     return createdBooking;
   } finally {
     await session.endSession();
@@ -566,6 +574,10 @@ export async function updateBookingStatus(
     });
 
     if (nextStatus === "cancelled") {
+      cancelDirectBookingInBeds24(String(booking._id)).catch((error) => {
+        console.error("[beds24-push] Unexpected error cancelling booking on Beds24", error);
+      });
+
       await sendAdminBookingChangedEmail({
         bookingReference: booking.bookingReference,
         action: "cancelled",
@@ -654,6 +666,10 @@ export async function cancelUserStayBooking(
   booking.refundAmount = preview.refundAmount;
   booking.refundStatus = preview.refundEligible ? "eligible" : "none";
   await booking.save();
+
+  cancelDirectBookingInBeds24(String(booking._id)).catch((error) => {
+    console.error("[beds24-push] Unexpected error cancelling booking on Beds24", error);
+  });
 
   const checkIn = String(booking.checkIn).slice(0, 10);
   const checkOut = String(booking.checkOut).slice(0, 10);

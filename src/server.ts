@@ -1,9 +1,11 @@
 import { app } from "./app.js";
 import { connectDatabase, disconnectDatabase } from "./config/database.js";
 import { env } from "./config/env.js";
+import { startBeds24SyncJob } from "./jobs/beds24-sync.job.js";
 
 async function startServer(): Promise<void> {
   await connectDatabase();
+  startBeds24SyncJob();
 
   const server = app.listen(env.PORT, () => {
     console.log(`API listening on http://localhost:${env.PORT}`);

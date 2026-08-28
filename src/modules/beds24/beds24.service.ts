@@ -1,5 +1,11 @@
 import { env } from "../../config/env.js";
 import { AppError } from "../../middleware/error-handler.js";
+import {
+  extractBeds24DataArray,
+  filterBookingsResponseByChannel,
+  isBeds24ChannelId,
+  type Beds24ChannelId,
+} from "./beds24-channels.js";
 
 type TokenCache = {
   accessToken: string;
@@ -66,10 +72,17 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
   return env.BEDS24_ACCESS_TOKEN!;
 }
 
-async function beds24Get<T>(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<T> {
+async function beds24Request<T>(
+  method: "GET" | "POST" | "DELETE",
+  path: string,
+  options?: {
+    query?: Record<string, string | number | boolean | undefined>;
+    body?: unknown;
+  },
+): Promise<T> {
   const params = new URLSearchParams();
-  if (query) {
-    for (const [key, value] of Object.entries(query)) {
+  if (options?.query) {
+    for (const [key, value] of Object.entries(options.query)) {
       if (value === undefined || value === null || value === "") continue;
       params.set(key, String(value));
     }
@@ -80,11 +93,13 @@ async function beds24Get<T>(path: string, query?: Record<string, string | number
   const requestOnce = async (forceRefresh: boolean) => {
     const token = await getAccessToken(forceRefresh);
     return fetch(url, {
-      method: "GET",
+      method,
       headers: {
         accept: "application/json",
         token,
+        ...(options?.body ? { "content-type": "application/json" } : {}),
       },
+      body: options?.body ? JSON.stringify(options.body) : undefined,
     });
   };
 
@@ -109,12 +124,35 @@ async function beds24Get<T>(path: string, query?: Record<string, string | number
   return json as T;
 }
 
+async function beds24Get<T>(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<T> {
+  return beds24Request<T>("GET", path, { query });
+}
+
+type Beds24PostResult = {
+  success: boolean;
+  new?: { id: number; status?: string };
+  modified?: { id: number; status?: string };
+  error?: string;
+  errors?: unknown;
+};
+
+/** Creates a booking (no `id`) or updates one (with `id`) — Beds24's POST /bookings does both. */
+export async function upsertBeds24Bookings(
+  items: Array<Record<string, unknown>>,
+): Promise<Beds24PostResult[]> {
+  return beds24Request<Beds24PostResult[]>("POST", "/bookings", { body: items });
+}
+
 export async function listBeds24Properties() {
   return beds24Get<unknown>("/properties", { includeAllRooms: true });
 }
 
-export async function listBeds24Bookings() {
-  return beds24Get<unknown>("/bookings");
+export async function listBeds24Bookings(channel?: string) {
+  const raw = await beds24Get<unknown>("/bookings");
+  if (!channel || !isBeds24ChannelId(channel)) {
+    return raw;
+  }
+  return filterBookingsResponseByChannel(raw, channel);
 }
 
 export function beds24Status() {
@@ -125,3 +163,49 @@ export function beds24Status() {
     apiBase: env.BEDS24_API_BASE,
   };
 }
+
+export async function probeBeds24Health() {
+  const status = beds24Status();
+
+  if (!status.configured) {
+    return {
+      ...status,
+      apiOk: false,
+      propertyCount: 0,
+      bookingCount: 0,
+      message: "Set BEDS24_REFRESH_TOKEN in Backend/.env, then restart the backend.",
+    };
+  }
+
+  try {
+    const [propertiesPayload, bookingsPayload] = await Promise.all([
+      listBeds24Properties(),
+      listBeds24Bookings(),
+    ]);
+    const propertyCount = extractBeds24DataArray(propertiesPayload).length;
+    const bookingCount = extractBeds24DataArray(bookingsPayload).length;
+
+    return {
+      ...status,
+      apiOk: true,
+      propertyCount,
+      bookingCount,
+      message:
+        propertyCount === 0
+          ? "API connected — add properties in Beds24 (manual or OTA import)."
+          : "Beds24 API is connected and returning data.",
+    };
+  } catch (error) {
+    const message = error instanceof AppError ? error.message : "Beds24 health check failed";
+    return {
+      ...status,
+      apiOk: false,
+      propertyCount: 0,
+      bookingCount: 0,
+      error: message,
+      message,
+    };
+  }
+}
+
+export type { Beds24ChannelId };
