@@ -1009,6 +1009,98 @@ export async function sendAdminNewStayBookingEmail(input: {
   );
 }
 
+/** Alert when a Booking.com / Expedia reservation is first synced into the website. */
+export async function sendAdminOtaChannelBookingEmail(input: {
+  channel: "expedia" | "booking";
+  bookingReference: string;
+  guestName: string;
+  guestEmail: string;
+  guestPhone?: string;
+  apartmentName: string;
+  checkIn: string;
+  checkOut: string;
+  nights: number;
+  guests: number;
+  totalAmount: number;
+  status: string;
+}) {
+  const to = env.ADMIN_NOTIFY_EMAIL;
+  const channelLabel = input.channel === "booking" ? "Booking.com" : "Expedia";
+  const channelHref =
+    input.channel === "booking" ? "/admin/channels/booking" : "/admin/channels/expedia";
+  const accent = input.channel === "booking" ? "#003580" : "#FFC72C";
+  const accentText = input.channel === "booking" ? "#ffffff" : "#1F2A2A";
+
+  return mail(
+    to,
+    `New ${channelLabel} booking — ${input.apartmentName}, ${input.checkIn}`,
+    [
+      "Hi Gregory,",
+      "",
+      `A new reservation from ${channelLabel} has been received on your Malfranza website.`,
+      "",
+      `Channel: ${channelLabel}`,
+      `Reference: ${input.bookingReference}`,
+      `Apartment: ${input.apartmentName}`,
+      `Check-in: ${input.checkIn}`,
+      `Check-out: ${input.checkOut}`,
+      `Nights: ${input.nights}`,
+      `Guests: ${input.guests}`,
+      `Status: ${input.status}`,
+      `Guest: ${input.guestName}`,
+      `Email: ${input.guestEmail}`,
+      input.guestPhone ? `Phone: ${input.guestPhone}` : "",
+      `Total: ${money(input.totalAmount)}`,
+      "",
+      `Dashboard: ${siteUrl("/admin")}`,
+      `Calendar: ${siteUrl("/admin/calendar")}`,
+      `Channel page: ${siteUrl(channelHref)}`,
+    ].filter(Boolean),
+    `<p>Hi Gregory,</p>
+     <p>A new reservation from <strong>${escapeHtml(channelLabel)}</strong> has been received on your Malfranza website and is now on the dashboard calendar.</p>
+     <div style="margin:18px 0 16px;">
+       <span style="display:inline-block;background:${accent};color:${accentText};font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;padding:6px 12px;border-radius:999px;">
+         ${escapeHtml(channelLabel)}
+       </span>
+     </div>
+     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:14px;">
+       <tr>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;color:#6b7280;width:38%;">Reference</td>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;font-weight:600;">${escapeHtml(input.bookingReference)}</td>
+       </tr>
+       <tr>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;color:#6b7280;">Apartment</td>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;font-weight:600;">${escapeHtml(input.apartmentName)}</td>
+       </tr>
+       <tr>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;color:#6b7280;">Dates</td>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;">${escapeHtml(input.checkIn)} → ${escapeHtml(input.checkOut)} <span style="color:#6b7280;">(${input.nights} night${input.nights === 1 ? "" : "s"})</span></td>
+       </tr>
+       <tr>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;color:#6b7280;">Guests</td>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;">${input.guests}</td>
+       </tr>
+       <tr>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;color:#6b7280;">Guest</td>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;">${escapeHtml(input.guestName)}<br/><span style="color:#4a5a5a;font-size:13px;">${escapeHtml(input.guestEmail)}${input.guestPhone ? ` · ${escapeHtml(input.guestPhone)}` : ""}</span></td>
+       </tr>
+       <tr>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;color:#6b7280;">Status</td>
+         <td style="padding:8px 0;border-bottom:1px solid #eef0ed;text-transform:capitalize;">${escapeHtml(input.status)}</td>
+       </tr>
+       <tr>
+         <td style="padding:8px 0;color:#6b7280;">Total</td>
+         <td style="padding:8px 0;font-weight:700;color:#2D5A3D;font-size:16px;">${money(input.totalAmount)}</td>
+       </tr>
+     </table>
+     <p style="margin-top:22px;">
+       <a href="${siteUrl("/admin")}" style="display:inline-block;background:#2D5A3D;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:11px 18px;border-radius:8px;margin-right:8px;margin-bottom:8px;">Open dashboard</a>
+       <a href="${siteUrl("/admin/calendar")}" style="display:inline-block;background:#ffffff;color:#2D5A3D;text-decoration:none;font-weight:600;font-size:14px;padding:10px 16px;border-radius:8px;border:1px solid #2D5A3D;margin-right:8px;margin-bottom:8px;">View calendar</a>
+       <a href="${siteUrl(channelHref)}" style="display:inline-block;background:#ffffff;color:#2D5A3D;text-decoration:none;font-weight:600;font-size:14px;padding:10px 16px;border-radius:8px;border:1px solid #c5d0c8;margin-bottom:8px;">${escapeHtml(channelLabel)} channel</a>
+     </p>`,
+  );
+}
+
 export async function sendAdminNewTaxiBookingEmail(input: {
   bookingReference: string;
   customerName: string;

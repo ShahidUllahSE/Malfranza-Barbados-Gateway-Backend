@@ -1,5 +1,9 @@
 import type { RequestHandler } from "express";
-import { syncExpediaBookings } from "./beds24-sync.service.js";
+import {
+  syncAllBeds24OtaBookings,
+  syncBookingComBookings,
+  syncExpediaBookings,
+} from "./beds24-sync.service.js";
 import {
   beds24Status,
   listBeds24Bookings,
@@ -42,6 +46,22 @@ export const getBeds24Bookings: RequestHandler = async (request, response) => {
 
 export const postBeds24SyncExpedia: RequestHandler = async (_request, response) => {
   const data = await syncExpediaBookings();
+  response.status(200).json({
+    success: true,
+    data,
+  });
+};
+
+export const postBeds24SyncBooking: RequestHandler = async (_request, response) => {
+  const data = await syncBookingComBookings();
+  response.status(200).json({
+    success: true,
+    data,
+  });
+};
+
+export const postBeds24SyncAll: RequestHandler = async (_request, response) => {
+  const data = await syncAllBeds24OtaBookings();
   response.status(200).json({
     success: true,
     data,

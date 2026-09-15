@@ -205,7 +205,7 @@ export const postBooking: RequestHandler = async (request, response) => {
   const stayId = String(booking.id ?? booking._id);
   await createAdminNotification({
     type: "stay_booking",
-    title: "New stay booking",
+    title: "New website booking",
     body: `${guest.guestName} · ${booking.apartmentName} · ${checkIn} → ${checkOut}`,
     href: `/admin/bookings`,
     entityId: stayId,

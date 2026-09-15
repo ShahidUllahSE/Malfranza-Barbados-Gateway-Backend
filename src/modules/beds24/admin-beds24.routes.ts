@@ -5,6 +5,8 @@ import {
   getBeds24Health,
   getBeds24Properties,
   getBeds24Status,
+  postBeds24SyncAll,
+  postBeds24SyncBooking,
   postBeds24SyncExpedia,
 } from "./admin-beds24.controller.js";
 
@@ -18,3 +20,5 @@ adminBeds24Router.get("/health", getBeds24Health);
 adminBeds24Router.get("/properties", getBeds24Properties);
 adminBeds24Router.get("/bookings", getBeds24Bookings);
 adminBeds24Router.post("/sync/expedia", postBeds24SyncExpedia);
+adminBeds24Router.post("/sync/booking", postBeds24SyncBooking);
+adminBeds24Router.post("/sync", postBeds24SyncAll);
